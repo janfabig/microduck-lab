@@ -276,6 +276,14 @@ class TidyMossParams:
     #: letting go anyway. A cap: a jam that never arrives still has to end,
     #: and dropping the can beside the bin beats carrying it forever.
     stow_settle_s: float = 3.0
+    #: Let go from `moss_env.STOW_RELEASE_HIGH` (over the bin centre, 11 cm
+    #: above the rim) instead of descending to `STOW_INSIDE`. OFF: MEASURED in
+    #: moss-yard (6 seeds x 300 s, paired) it is a null — 14/36 objects in the
+    #: bin against 13/36, per seed +0 +1 +1 +1 -2 +0 — because in the world
+    #: ~93% of releases ALREADY land in the bin; the losses are upstream (the
+    #: pick misses the block and ball, fingertip grips drop on the carry). The
+    #: learned fold was also trained on tuck poses that follow `STOW_INSIDE`.
+    release_high: bool = False
     #: How long a grip may READ as lost before the loop believes it. The
     #: pads break and remake contact constantly while the arm accelerates:
     #: traced in the room, `holding` flickered holds/released/holds/released
@@ -1174,9 +1182,10 @@ class TidyMoss:
             # rotation has to happen ABOVE the bin. Ramped along these three
             # waypoints and opened at the end, this delivers 6 of 6 in the
             # stow env, where the straight ramp delivers 0 of 10.
+            drop_pose = ME.STOW_RELEASE_HIGH if p.release_high else ME.STOW_INSIDE
             legs = ((ME.STOW_HIGH, p.stow_high_s),
                     (ME.STOW_TURNED, p.stow_turn_s),
-                    (ME.STOW_INSIDE, p.stow_down_s))
+                    (drop_pose, p.stow_down_s))
             t_end = 0.0
             arm = None
             for pose, dur in legs:
@@ -1220,12 +1229,12 @@ class TidyMoss:
                 # x = +0.151 +- 0.319 m when the jaws opened, still out in
                 # front, with the bin's mouth behind at x = -0.087. Hold the
                 # final pose and let go once the arm is actually there.
-                arm = _pose(ME.STOW_INSIDE)
+                arm = _pose(drop_pose)
                 reached = False
                 if senses.arm is not None:
                     reached = max(
                         abs(float(senses.arm.get(j, 0.0)) - v)
-                        for j, v in zip(moss.ARM_JOINTS, ME.STOW_INSIDE)
+                        for j, v in zip(moss.ARM_JOINTS, drop_pose)
                     ) < p.stow_tol_rad
                 note = "stow: holding over the bin"
                 if reached or since >= t_end + p.stow_settle_s:

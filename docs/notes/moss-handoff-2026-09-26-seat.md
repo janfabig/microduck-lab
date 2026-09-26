@@ -72,3 +72,15 @@ release low, and releasing low fills worse. At the best height the centre is as 
 misses LATER (spot aims go toward the edges; the centre leaves bounce room). The bin holds
 ~6 mixed items. Caveat: placed items are welded where they land (static clutter), so a new
 drop cannot shove them — a real bin settles; that could favour either side.
+
+## The "cheap release fix" — a null, and what it says about where the yard loses objects
+
+`STOW_RELEASE_HIGH` (tool point over the bin centre, 11 cm above the rim, carry wrist)
+in place of the descent to `STOW_INSIDE`: moss-yard, 6 seeds x 300 s, paired —
+**14/36 objects in the bin against 13/36** (per seed +0 +1 +1 +1 -2 +0). In the world
+~93% of RELEASES already land in the bin (13 of 14). An env replica of the brain's
+carry lost 32/72 at release — the replica was wrong, which is why it was not trained
+on. The yard's losses are upstream: block 0/6 and ball 0/6 are almost never gripped,
+and fingertip grips (>45 mm from the tool point) never survive the carry (0/7).
+`release_high` kept, default OFF. Also found: `_held()`'s 2.0 mm servo-stall test
+reads a physically carried can as dropped at the brain's 27 mm carry squeeze.

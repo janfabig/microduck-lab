@@ -2778,6 +2778,15 @@ STOW_EPISODE_S = 20.0
 STOW_HIGH = (1.3534, -1.35, 0.10, 1.4345, -0.05)
 STOW_TURNED = (-1.776, -1.35, 0.10, 1.4345, -0.05)
 STOW_INSIDE = (-1.7706, -0.8998, 1.2069, -0.717, 1.154)
+#: LET GO HIGH OVER THE MIDDLE, wrist as carried (2026-09-26). IK'd to put
+#: the tool point at the bin centre (-0.087, 0) 11 cm above the rim — where
+#: the learned stow lets go. `STOW_INSIDE` descends to 0.331 m with the wrist
+#: turned, and there the object rests on the palm when the pads open: in the
+#: stow env, low releases wedge on the pads or clutter (75% delivered) and a
+#: high one over the centre delivers 91% and fills a bin fullest (6.08 items
+#: in the fill test against 3.00 low). `STOW_TURNED`'s tool point sits over
+#: the bin's FRONT WALL (x -0.012), which is why a last move is still needed.
+STOW_RELEASE_HIGH = (-1.8745, -0.6995, -0.2721, 1.4345, -0.05)
 
 #: WHERE EACH RUNG STARTS — one more piece of the route per rung, which is
 #: the whole point of the ladder:
