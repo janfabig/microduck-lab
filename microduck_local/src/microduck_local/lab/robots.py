@@ -713,6 +713,25 @@ def slot_env(robot: str, seed: int, kwargs: dict | None = None):
         # and a TypeError inside `_make_env` would be a slot that cannot be
         # created at all.
         return KinematicIdle(body, seed=seed)
+    # THE BODY'S OWN ENV KNOBS, read from the environment the way the trainer
+    # reads them. Without this a roster slot silently takes every ladder's
+    # DEFAULT rung: a lab launched with MICRODUCK_MOSS_PICK_RUNG=2 showed
+    # MOSS picking at rung 0, where the can spawns between the pads within
+    # 15 mm every episode — which looks like a robot that never sees a
+    # different can, and is, and is the fourth place this same knob had to
+    # be plumbed. One seam for every lab env, rather than a fifth.
+    #
+    # A caller that names the kwarg itself WINS: the trainee preview resolves
+    # its stage's rung and passes it explicitly, and that must beat whatever
+    # the lab process happens to have exported.
+    fn = getattr(body, "train_env_kwargs", None)
+    if fn is not None:
+        import types
+        try:
+            derived = dict(fn(types.SimpleNamespace(task=task)))
+        except Exception:
+            derived = {}
+        kw = {**derived, **kw}
     return body.env_class(task)(**kw)
 
 

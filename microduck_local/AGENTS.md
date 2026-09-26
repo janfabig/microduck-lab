@@ -214,6 +214,154 @@ env modules; the viewer does, so leave it running) and then POST:
 bash .claude/skills/restart-servers/restart.sh --backend-only
 ```
 
+### POSTing is not the same as being WATCHED — check the stage, every time
+
+Launching through the lab is only half the rule. On 2026-09-25 a three-stage
+MOSS pick chain was POSTed to `/teach`, ran all 2.5M steps and finished, and
+the person who asked for it **saw nothing at all** — then reasonably asked why
+it was not being trained in the lab. It was. It was invisible anyway, for
+reasons that are all checkable in one command, so check them:
+
+```bash
+uv run --with websockets python scripts/stage_check.py 127.0.0.1:8788
+```
+
+**There is no GET for the roster** — it exists only in the streamed frames, so
+`curl` cannot answer this. `/state` is a 404, and its body parses to zero
+ducks if you are careless, which is a false alarm that reads exactly like the
+real failure: on 2026-09-25 it sent this investigation after a bug that was
+not there while the four MOSS bodies on stage were perfectly visible. Read a
+real frame.
+
+**A lab that has just restarted has an EMPTY stage.** The roster is not
+rebuilt for you. The teach job's trainee is then the only body on it, and the
+moment the job finishes that trainee is reaped and the stage goes blank again.
+Somebody who looks a minute later sees an empty room and concludes, correctly
+from what is in front of them, that nothing ever ran. `0 ducks on stage` while
+`/teach/status` says `training` is the signature of this, and it means the
+person is being asked to trust your summary of something they were never
+shown — the exact failure the section above exists to prevent.
+
+So, after the POST and before saying "you can watch it":
+
+1. **A real frame carries the trainee** (`scripts/stage_check.py`). Stale
+   trainees from finished jobs are NOT always reaped, so expect to see old
+   ones beside the live one — the live trainee's id is in `/teach/status`.
+2. **Tell them the URL, with the port of the lab you actually launched on.**
+   `http://localhost:63317` reads `127.0.0.1:8788` by default; a scratch lab
+   needs `?lab=127.0.0.1:8799`. A tab left pointing at the other one is a tab
+   that shows an empty stage while a job runs perfectly.
+3. **Check again while it is still running**, not after. A chain that finishes
+   inside one of your turns was never watched, whatever the log says.
+
+### The training loop is a TOOL, not a conversation
+
+`uv run python scripts/watch_training.py` blocks until the active teach run
+finishes and then prints `scripts/pick_report.py` (picks, can displacement,
+base command, chassis turn, floor dragging, torque saturation, and the
+wrist-vs-axis slope with its p) and `scripts/reward_budget.py` (what every
+reward term is worth per episode). Run it in the BACKGROUND so its exit is
+what brings you back, instead of a human having to ask whether training is
+done — they asked four times on 2026-09-25 and every answer cost a hand-built
+probe that had to be re-derived.
+
+The `.claude/skills/train-loop` skill documents the whole cycle. The one rule
+worth repeating here: **evaluate a policy under the flags it TRAINED with.**
+`moss_env.eval_env_kwargs(run)` reads them off `run.json` — `OBS_FLAGS` for
+what it saw, `DYN_FLAGS` for what it was allowed to do. Getting it wrong does
+not look like a bug, it looks like a finding: an axis-blind policy measured
+0/12 instead of 10/12, a probe missing `publish_size` measured 3 grips instead
+of 63, and a base-locked policy measured 23.7 degrees of chassis turn instead
+of 0.3. The second and third of those happened AFTER the guard existed,
+because it covered some of the flags and read as covering all of them.
+
+### Four ways a measurement here has lied, and the check for each
+
+All four happened on 2026-09-25, in one session, to numbers that were then
+reported as findings. None was a subtle statistical problem; each was an
+instrument that could not answer the question it was pointed at.
+
+**1. Measuring through your own reimplementation instead of the production
+path.** A probe built `MossPickEnv(...)` directly, so `MICRODUCK_MOSS_PICK_RUNG`
+never reached it — the rung is translated to a kwarg by
+`Body.train_env_kwargs`, one layer up. All three rungs returned BYTE-IDENTICAL
+output and were nearly reported as "the rung knob does nothing". The same
+session invented a `/state` endpoint that does not exist.
+→ *Call the function the trainer calls.* If a probe sets up the world itself,
+it is measuring the probe. And assert the setup took: `assert kw["pick_rung"]
+== rung` costs one line and would have caught it instantly.
+
+**2. Absence read as a value.** A 404 body parsed with `d.get("ducks")`
+returned None and printed "0 ducks on stage" — indistinguishable from an empty
+stage. A dead observation slot reads as a perfectly legitimate `0.000`. An
+assignment to a frozen dataclass silently does nothing, so two A/B arms ran the
+same config and produced a null that measured nothing.
+→ *Make missing look different from zero.* Check the status code, assert the
+key exists, and for anything that is supposed to VARY, assert its standard
+deviation is non-zero rather than reading its mean.
+
+**3. A proxy adjacent to the claim.** "The wrist does not aim" was argued from
+travel (max − min), which cannot distinguish moving a lot from arriving
+anywhere; the honest measure is the angle AT THE GRASP regressed on the target
+(sd 2.6 deg against a can axis spanning 54 deg, slope 0.008 deg/deg). "Shoved
+12.8 cm" was cumulative path length, which counts a can jittering against a
+pad — and it UNDERSTATED the effect, forcing a published "not significant"
+verdict to be retracted once net displacement was used instead.
+→ *Write the claim as a sentence, then check the number is its subject.* If the
+claim is "X tracks Y", the measurement is a correlation or a slope, never a
+range.
+
+**4. Calibrated under different conditions from where it is applied.** A shove
+abort was calibrated on whole-episode displacement but applied only before the
+first grip, so the rung predicted to fire on 15% of episodes fired on 1 of 40 —
+nearly shipping a curriculum whose first rung was decoration.
+→ *Calibrate through the same gate the knob acts behind*, and print the rate it
+actually achieves before trusting the ladder (see `check-a-knobs-reachable-set`
+and the `board_margin` no-op that preceded it).
+
+**And the compatibility trap underneath all of them:** a policy's OBSERVATION
+VARIANT is not in its `.onnx`. Filling slots 28-30 for a policy trained while
+they were dead pins three of thirty-two inputs at the clip bound (the
+normalizer's var there is 3e-10) and it stops working — 10/12 -> 0/12 for the
+shipped leg, and 59/60 -> 0/60 inside a probe written to compare policies,
+which set the flag process-wide. Consumers must ask
+`moss_env.obs_env_kwargs(run)` rather than a process environment variable, and
+`test_a_policy_is_evaluated_in_the_observation_it_TRAINED_on` holds that line.
+
+**The habit that catches all of it: plant the regression.** Every test added
+that day was run against a deliberately broken version first — the axis
+coverage test against a front camera reporting nothing (0% at rung 2), the
+geometry test against a jaw sliding vertically (yaw span 164.7 -> 0.0 deg). Two
+earlier tests in this repo passed against their own planted breakage and were
+rewritten. A test not yet seen to fail is a comment.
+
+### The stage must show the physics the TRAINER is running
+
+The lab builds its preview envs **in its own process** (`lab/robots.slot_env`,
+`viz_server.Duck._make_env`), while the trainer is a **subprocess** that
+imports the env fresh at launch. Change an env or robot module and the two
+disagree immediately: the trainer runs your new code and the stage keeps
+previewing whatever the lab imported when it started. Nothing warns you, and
+the person watching is shown a robot obeying different physics from the one
+being trained — which is worse than showing them nothing, because it looks
+authoritative.
+
+Measured on 2026-09-25: the `:8788` listener had been up since **Sep 15**, ten
+days, across a session that had changed `robots/moss_env.py` repeatedly. The
+attitude slots the trainer had just started filling from two cameras were
+still dead in the preview.
+
+**So: touching anything under `robots/`, `behaviors/`, `world/` or `brain/`
+means restart the backend BEFORE you POST** — and restart it while the lab is
+idle, because the guard refuses once a trainer is live and the trainer is the
+lab's own child process (restarting later kills the run).
+
+```bash
+lsof -ti :8788 | head -1 | xargs -I{} ps -o lstart= -p {}   # how stale is it?
+```
+
+If that start time predates your edit, the stage is lying. Restart, then POST.
+
 ### "Has the trainer finished?" — ask the lab, never the process table
 
 ```bash

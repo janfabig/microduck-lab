@@ -322,10 +322,13 @@ def test_remove_duck_guards(fake_popen):
     assert V.remove_duck_error(st, "trainee") is None  # no active run
     assert "no duck helper9" in V.remove_duck_error(st, "helper9")
     assert V.remove_duck_error(st, "helper1") is None
-    # … except the trainee while a run is live (it's the run's only window),
-    st.job = SimpleNamespace(status="training")
+    # … except the trainee while ITS OWN run is live (the run's only window).
+    # Spelled with `st.jobs` rather than two `st.job =` assignments because
+    # the lab holds several jobs now and the guard asks about the one that
+    # owns THIS duck — see test_only_a_training_trainee_is_unremovable.
+    st.jobs = [SimpleNamespace(status="training", trainee_id="trainee")]
     assert "stop the run" in V.remove_duck_error(st, "trainee")
-    st.job = SimpleNamespace(status="done")
+    st.jobs = [SimpleNamespace(status="done", trainee_id="trainee")]
     assert V.remove_duck_error(st, "trainee") is None
     # … and helpers still wait out a trainer restart (plain ducks don't).
     st.scaling = True
@@ -2592,3 +2595,371 @@ def test_a_run_dir_from_somewhere_else_is_not_claimed_as_a_named_run(
                                                checkpoints=None))
     assert duck.policy_id is None
     assert duck.label == "find_ball"
+
+
+def test_a_successful_termination_is_not_counted_as_a_fall():
+    """A task env ends an episode by SUCCEEDING as readily as by failing.
+
+    The lab's counter was named for a walking duck, where the only early end
+    is on the floor. MOSS's pick env terminates on `knocked or picked`, so
+    every counted "fall" on a working pickup policy was a pickup: the panel
+    showed `moss-pick-v1` a red 921 for a policy measured at 20 picks out of
+    20. An env that reports `info["success"]` gets its wins counted apart;
+    one that does not is unchanged and every termination is still a fall.
+    """
+    d = V.Duck("m9", "outcomes", V._zero_infer, seed=1, env_kwargs={})
+
+    class _Env:
+        """Ends every episode, alternating success and failure."""
+
+        def __init__(self):
+            self.n = 0
+
+        def step(self, _a):
+            self.n += 1
+            return (d.obs, 0.0, True, False, {"success": self.n % 2 == 1})
+
+        def reset(self, **_kw):
+            return d.obs, {}
+
+    d.env = _Env()
+    d.sample_speed = lambda: None          # needs a real model otherwise
+    for _ in range(6):
+        d.tick()
+    assert (d.wins, d.falls) == (3, 3), (d.wins, d.falls)
+
+    # An env that says nothing about the outcome keeps the old meaning.
+    quiet = V.Duck("m10", "quiet", V._zero_infer, seed=1, env_kwargs={})
+
+    class _Quiet(_Env):
+        def step(self, _a):
+            return (quiet.obs, 0.0, True, False, {})
+
+    quiet.env = _Quiet()
+    quiet.sample_speed = lambda: None
+    for _ in range(4):
+        quiet.tick()
+    assert (quiet.wins, quiet.falls) == (0, 4), (quiet.wins, quiet.falls)
+
+
+def test_the_lab_trains_several_jobs_at_once(fake_popen):
+    """Concurrency, and the env budget that bounds it.
+
+    The lab used to hold exactly one job and refuse any second /teach. That
+    was a software limit, not a machine one: one 32-env job measures ~463%
+    CPU, about 4.6 of an 18-core machine, so more fit beside it. What is
+    scarce is ENVS, so jobs draw from one budget and the refusal is about
+    that rather than about a count.
+    """
+    st = V.LabState([types.SimpleNamespace(id="d0")])
+    assert st.job is None and st.jobs == []
+
+    a = V.TrainingJob("backflip", steps=1000, envs=32, trainee_id="trainee")
+    st.job = a
+    b = V.TrainingJob("one_leg", steps=1000, envs=32, trainee_id="trainee2")
+    st.job = b
+
+    # BOTH are live, and each has its own preview duck: a shared "trainee"
+    # would have them writing over each other's window.
+    assert st.jobs == [a, b]
+    assert {j.trainee_id for j in st.jobs} == {"trainee", "trainee2"}
+    assert st.envs_in_use() == 64
+    assert len(st.training_jobs()) == 2
+
+    # `st.job` keeps its old single-job meaning for every caller written
+    # before concurrency: the newest job.
+    assert st.job is b
+    st.job = None
+    assert st.jobs == [a] and st.job is a
+
+
+def test_trainee_slots_are_reused_and_recognised(fake_popen):
+    ducks = [types.SimpleNamespace(id="d0")]
+    # A job CLAIMS a slot at construction and creates its duck only after, so
+    # asking twice before either duck exists must not hand out the same id —
+    # it did, and two concurrent jobs shared one preview window.
+    jobs = [V.TrainingJob("backflip", steps=1000, trainee_id="trainee")]
+    assert V.next_trainee_slot(ducks, jobs) == "trainee2"
+    assert V.next_trainee_slot(ducks) == "trainee"
+    ducks.append(types.SimpleNamespace(id="trainee"))
+    assert V.next_trainee_slot(ducks) == "trainee2"
+    ducks.append(types.SimpleNamespace(id="trainee2"))
+    assert V.next_trainee_slot(ducks) == "trainee3"
+    # A freed slot is reused, so ids stay stable as jobs come and go.
+    ducks = [d for d in ducks if d.id != "trainee"]
+    assert V.next_trainee_slot(ducks) == "trainee"
+    assert V.is_trainee("trainee") and V.is_trainee("trainee3")
+    assert not V.is_trainee("helper1") and not V.is_trainee("d0")
+
+
+def test_env_budget_is_what_refuses_a_job(fake_popen):
+    """A job is refused for want of ENVS, not because another one exists."""
+    st = V.LabState([types.SimpleNamespace(id="d0")])
+    budget = V.env_budget()
+    assert budget >= V.BASE_ENVS
+    # Fill the budget exactly.
+    st.job = V.TrainingJob("backflip", steps=1000, envs=budget)
+    assert st.envs_in_use() == budget
+    assert budget - st.envs_in_use() < V.MIN_JOB_ENVS   # the refusal condition
+    # A job that has FINISHED frees its envs again.
+    st.jobs[0].status = "done"
+    assert st.envs_in_use() == 0
+    assert budget - st.envs_in_use() >= V.MIN_JOB_ENVS
+
+
+def test_an_unnamed_stop_refuses_when_several_jobs_train(fake_popen):
+    """It used to mean "stop the one job"; concurrency made it "stop all".
+
+    The viewer's stop button sends no name, so one click on one card stopped
+    every live run — including another session's. An unnamed stop now refuses
+    unless there is exactly one, or the caller says `all`.
+    """
+    import asyncio
+    app = V.make_app([])
+    st = app.state.lab
+    st.jobs = [V.TrainingJob("backflip", steps=1000),
+               V.TrainingJob("one_leg", steps=1000)]
+    route = {r.name: r for r in app.routes if getattr(r, "name", "")}["teach_stop"]
+
+    out = asyncio.run(route.endpoint(None))
+    assert out["ok"] is False and out["stopped"] == []
+    assert "2 jobs are training" in out["message"]
+    assert all(j.status == "training" for j in st.jobs)   # nothing was stopped
+
+    # Naming one stops exactly that one.
+    out = asyncio.run(route.endpoint({"run": st.jobs[0].run_name}))
+    assert out["ok"] and out["stopped"] == [st.jobs[0].run_name]
+
+    # And `all` still stops the rest.
+    out = asyncio.run(route.endpoint({"all": True}))
+    assert out["ok"]
+
+
+def test_finished_trainees_are_reaped(fake_popen):
+    """A trainee duck per job, but not one per job FOREVER.
+
+    With a single job the lab reused one duck called "trainee". Per-job ids
+    allocate a fresh one each time and nothing removed the old, so after nine
+    starts the stage carried nine trainees — six of them identical copies of
+    a stopped run, each still stepping a MuJoCo env in the 50 Hz loop.
+    """
+    ducks = [types.SimpleNamespace(id="d0"),
+             types.SimpleNamespace(id="trainee"),
+             types.SimpleNamespace(id="trainee2"),
+             types.SimpleNamespace(id="trainee3")]
+    st = V.LabState(ducks)
+    dead = V.TrainingJob("backflip", steps=1000, trainee_id="trainee")
+    dead.status = "stopped"
+    liveJob = V.TrainingJob("one_leg", steps=1000, trainee_id="trainee3")
+    st.jobs = [dead, liveJob]
+
+    gone = V.reap_trainee_ducks(st)
+    # `trainee` is claimed by a stopped job that is not the newest, so it
+    # goes. `trainee3` is training. `trainee2` is claimed by NO job — a
+    # restored duck, left alone. `d0` is not a trainee at all.
+    assert gone == ["trainee"]
+    assert [d.id for d in st.ducks] == ["d0", "trainee2", "trainee3"]
+    assert st.jobs == [liveJob]
+
+    # The NEWEST job keeps its duck even when finished, so its card survives.
+    st2 = V.LabState([types.SimpleNamespace(id="trainee")])
+    done = V.TrainingJob("backflip", steps=1000, trainee_id="trainee")
+    done.status = "done"
+    st2.jobs = [done]
+    assert V.reap_trainee_ducks(st2) == []
+    assert [d.id for d in st2.ducks] == ["trainee"]
+
+
+def test_a_restored_trainee_is_never_reaped(fake_popen):
+    """No job claims it, so it is a restored duck, not an orphan.
+
+    After a lab restart `st.jobs` is empty while `restore_ducks` has brought
+    the roster back. A sweep that went by NAME deleted those — the trap
+    `teach_clear` documents — and a G1 trainee vanishing that way made the
+    body guess fall back to the duck, so the next job trained on the wrong
+    robot entirely.
+    """
+    st = V.LabState([types.SimpleNamespace(id="trainee"),
+                     types.SimpleNamespace(id="trainee2")])
+    assert st.jobs == []
+    assert V.reap_trainee_ducks(st) == []
+    assert [d.id for d in st.ducks] == ["trainee", "trainee2"]
+
+
+def test_only_a_training_trainee_is_unremovable(fake_popen):
+    """The guard asks about THIS duck's job, not the newest one.
+
+    Asking about the newest job refused every trainee on the stage the moment
+    anything trained — including orphans from jobs that had already stopped,
+    which is exactly the pile a user wants to clear.
+    """
+    ducks = [types.SimpleNamespace(id="trainee"),
+             types.SimpleNamespace(id="trainee2")]
+    st = V.LabState(ducks)
+    dead = V.TrainingJob("backflip", steps=1000, trainee_id="trainee")
+    dead.status = "stopped"
+    liveJob = V.TrainingJob("one_leg", steps=1000, trainee_id="trainee2")
+    st.jobs = [dead, liveJob]
+
+    assert V.remove_duck_error(st, "trainee") is None          # orphan: go
+    assert "stop the run first" in V.remove_duck_error(st, "trainee2")
+
+
+def test_every_job_is_polled_not_just_the_newest(fake_popen):
+    """`poll()` is what launches a chain's next stage.
+
+    The lab loop polled `st.job` — the newest — so any other job stranded
+    the moment its current stage finished: a stow chain read "training" with
+    no trainer alive, stage 1 complete and stage 2 never launched, because a
+    later job had taken over `st.job`. Polling is per job now.
+    """
+    older = V.TrainingJob("backflip", steps=1000, trainee_id="trainee")
+    newer = V.TrainingJob("one_leg", steps=1000, trainee_id="trainee2")
+    st = V.LabState([types.SimpleNamespace(id="d0")])
+    st.jobs = [older, newer]
+    assert st.job is newer, "the OLDER job is the one at risk"
+
+    # Finish the older job's first stage; only a poll advances it.
+    _finish_stage(older, 1000)
+    before = older.stage_idx
+    V.poll_all(st)          # what the lab loop calls, once per tick
+    assert older.stage_idx == before + 1, (
+        "the older job never advanced — this is the stranding bug")
+    assert any("Training stage" in e for e in st.events)
+
+
+def test_the_stats_strip_follows_a_training_job(fake_popen):
+    """It reported the NEWEST job, which said "done" while another trained.
+
+    With concurrency the newest job is often a finished one, and the HUD's
+    `train ✔ done` then reads as "nothing is running" while a chain is still
+    going — which is exactly how it was read.
+    """
+    st = V.LabState([types.SimpleNamespace(id="d0")])
+    training = V.TrainingJob("backflip", steps=1000, trainee_id="trainee")
+    finished = V.TrainingJob("one_leg", steps=1000, trainee_id="trainee2")
+    finished.status = "done"
+    st.jobs = [training, finished]
+    assert st.job is finished, "the newest job is the finished one"
+    live = st.training_jobs()
+    assert live and live[0] is training, (
+        "the strip must follow the job that is actually training")
+
+
+def test_a_snapshot_only_reaches_its_own_jobs_duck(fake_popen):
+    """One run's brain must not be loaded into another run's window.
+
+    The snapshot used to be taken from the NEWEST job and fanned onto every
+    duck whose id looked like a trainee. With two jobs training that put the
+    approach policy into the stow trainee's window — the preview showed a
+    run practising someone else's task.
+    """
+    a_duck = types.SimpleNamespace(id="trainee")
+    b_duck = types.SimpleNamespace(id="trainee2")
+    helper = types.SimpleNamespace(id="helper1")
+    other = types.SimpleNamespace(id="d0")
+    st = V.LabState([a_duck, b_duck, helper, other])
+    a = V.TrainingJob("backflip", steps=1000, trainee_id="trainee")
+    b = V.TrainingJob("one_leg", steps=1000, trainee_id="trainee2")
+    st.jobs = [a, b]
+
+    assert V.snapshot_targets(st, a) == [helper, a_duck]
+    assert V.snapshot_targets(st, b) == [helper, b_duck]
+    # the crux: B's snapshot never reaches A's duck
+    assert a_duck not in V.snapshot_targets(st, b)
+    assert b_duck not in V.snapshot_targets(st, a)
+
+
+def test_teach_env_knobs_are_micro_duck_only():
+    """`/teach` may carry MICRODUCK_* env knobs for its trainer, nothing else.
+
+    It exists because an `initFrom` fine-tune has no curriculum stage, so it
+    inherits the LAB's environment and therefore every env's DEFAULT rung —
+    continuing MOSS's shipped pickup (12/12 at rung 2) would have retrained
+    it at rung 0. The allow-list is the point: this value reaches a
+    subprocess environment, so a request must not be able to set PATH.
+
+    Planted the regression to check this bites: drop the `startswith` guard
+    in `teach_env_knobs` and the PATH case below stops raising.
+    """
+    import microduck_local.viz_server as V
+
+    assert "env" in V.TeachReq.model_fields, "TeachReq must carry env knobs"
+    assert V.teach_env_knobs(None) == {}
+    assert V.teach_env_knobs({"MICRODUCK_MOSS_PICK_RUNG": 2}) == {
+        "MICRODUCK_MOSS_PICK_RUNG": "2"}, "values are stringified for the env"
+
+    for evil in ({"PATH": "/tmp/evil"}, {"PYTHONPATH": "/tmp/evil"},
+                 {"LD_PRELOAD": "x.so"}, {"microduck_lower": "1"}):
+        with pytest.raises(Exception) as got:
+            V.teach_env_knobs(evil)
+        assert getattr(got.value, "status_code", None) == 422, (
+            f"{evil} must be refused with 422, not passed to a subprocess")
+
+
+def test_the_watched_trainee_mirrors_the_trainers_env_knobs():
+    """A /teach `env` knob must reach the PREVIEW, not just the trainer.
+
+    The trainer subprocess inherits the variables and the body's
+    `train_env_kwargs` reads them. The preview is in-process and mirrored
+    only two hardcoded knobs, so MOSS's curriculum trained rung 2 while the
+    watched trainee ran the default rung 0 — silently, because both look
+    plausible. A peer session hit the identical shape on the duck and lost an
+    hour arguing with its user about what the robot was doing.
+
+    Planted the regression to check this bites: drop the `_body_env_kwargs`
+    call from `trainee_env_kwargs` and `pick_rung` disappears below.
+    """
+    import os
+    import microduck_local.viz_server as V
+    from microduck_local.behaviors.moss_tasks import MOSS_PICK, MOSS_STOW
+
+    kw = V.trainee_env_kwargs(MOSS_PICK, {"MICRODUCK_MOSS_PICK_RUNG": "2"})
+    assert kw.get("pick_rung") == 2, (
+        "the trainee preview must run the rung the trainer was given — "
+        f"got {kw!r}")
+
+    kw = V.trainee_env_kwargs(MOSS_STOW, {"MICRODUCK_MOSS_STOW_RUNG": "1"})
+    assert kw.get("stow_rung") == 1
+
+    # And it must not leak: the preview stages the variables for the length
+    # of one call, in a process that is also running other ducks.
+    before = os.environ.get("MICRODUCK_MOSS_PICK_RUNG")
+    V.trainee_env_kwargs(MOSS_PICK, {"MICRODUCK_MOSS_PICK_RUNG": "0"})
+    assert os.environ.get("MICRODUCK_MOSS_PICK_RUNG") == before, (
+        "staging a knob for the preview must not change the lab's own "
+        "environment — every other duck in the roster reads it too")
+
+
+def test_the_trainee_preview_is_not_an_easier_task_than_the_trainer():
+    """What you WATCH must be what is being TRAINED.
+
+    Three separate knobs were found wrong this way in one session, each
+    patched by name, each time leaving the next one broken:
+
+      * `/teach` env knobs reached the trainer and not the preview, so MOSS
+        previewed rung 0 while training rung 2;
+      * the preview inherited `domain_rand=False`, so the can spawned upright
+        EVERY episode while the trainer saw a 50/50 upright/lying mix;
+      * a peer session lost an hour to the same shape on the duck.
+
+    The person watching reasonably concluded the robot only ever met one
+    case, and said so. This asserts the RULE rather than the three knobs.
+    """
+    import microduck_local.viz_server as V
+    from microduck_local.behaviors.moss_tasks import MOSS_PICK
+
+    kw = V.trainee_env_kwargs(MOSS_PICK, {"MICRODUCK_MOSS_PICK_RUNG": "2"})
+    assert kw.get("domain_rand") is True, (
+        "the trainee preview must randomise the way the trainer does — "
+        "without this the watched can is always upright")
+    assert kw.get("obs_noise") is True
+    assert kw.get("pick_rung") == 2
+
+    # And the reason the preview could not randomise before: it shared one
+    # compiled model with the roster, which domain randomisation writes to.
+    # A duck that randomises has to take a private compile.
+    import inspect
+    src = inspect.getsource(V.Duck._make_env)
+    assert "writes_model" in src, (
+        "a preview that randomises must not share the roster's mjModel")

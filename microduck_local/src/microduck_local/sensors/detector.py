@@ -466,6 +466,23 @@ class Target:
     # left the 48 deg vertical frustum (the capsule's centre leaves it at
     # 1.2 m); the part in view is what is reported. 0: a point-like thing.
     height: float = 0.0
+    # What a DETECTOR should invert this target's apparent width with, when
+    # the scenario knows the object better than its class does.
+    #
+    # `range_est` is `rad / tan(width/2)` where `width` is synthesized from
+    # the target's TRUE radius and `rad` is `NOMINAL_RADIUS[cls]` — a real
+    # detector infers range from an assumed class size, and that asymmetry is
+    # the point of the model. But a class constant sized on one object is
+    # WRONG for every other object in the class, and silently: MEASURED on a
+    # 66 x 115 mm drinks can declared `"toy"` (nominal 0.02 m), the reported
+    # range was 0.259 m while the can stood at 0.491 m, and MOSS's pick brain
+    # shut its jaws on air seven times in 180 s without a single clue why.
+    #
+    # None keeps the class constant, so every duck, ball, person and basket
+    # measured before this field existed is bit-for-bit unchanged. A scenario
+    # that declares a prop's own size can pass it and get a detector that is
+    # wrong by its noise model rather than by a table lookup.
+    nominal_radius: float | None = None
     # A FIXED world position instead of a body: the goal posts of a pitch,
     # which are a line the World scores and not geometry in the model
     # (roadmap Track 4 s6 C.2). `body` is ignored (pass -1) and the target
@@ -886,7 +903,8 @@ class Detector:
             if nz.width_sigma_frac:
                 width *= float(np.clip(1.0 + g.normal(0.0, nz.width_sigma_frac), 0.3, 3.0))
             conf = p_find * float(g.uniform(nz.conf_floor, 1.0))
-            rad = NOMINAL_RADIUS.get(tgt.cls, tgt.radius)
+            rad = (tgt.nominal_radius if tgt.nominal_radius is not None
+                   else NOMINAL_RADIUS.get(tgt.cls, tgt.radius))
             range_est = rad / max(np.tan(width / 2), 1e-4)
             out.append(Detection(tgt.cls, tgt.name, bearing, elev, width, float(range_est), conf,
                                  self._color(tgt, float(range_est))))
