@@ -311,3 +311,22 @@ object the BRAIN is going for (its `_fix`):
   -0.42 +- 0.44): null, leaning worse — fewer carries reached the lift (125 v 145), those
   that did kept slightly better. Reverted (patch `sensor_hint.patch` in scratch). The
   mismatch is real but it is not costing objects.
+
+## The ball in the carry (2026-09-27): squeezed out, and none of three levers fixes it
+
+Mechanism (12 yard seeds, 12 ball carries, 7 lost; `ball_stow.py` in scratch): at a
+constant jaw command the achieved jaw creeps shut (20 -> 13 mm over ~1.5 s) while the
+ball's centre moves 24 -> 37 mm from the tool point, then it pops out — the pads meet the
+sphere AHEAD of its centre, so the squeeze has an outward part; the jaws point down
+(tool axis z -0.87) through the lift, so gravity helps. As often in the lift as the stow.
+Against the 25 Hz baseline (99 in bin, 24 seeds):
+* lighter squeeze for all (12 seeds): 6 mm ball kept 9/12 v 5/12 but bin 51 v 50 (other
+  objects lost in the stow); 4 mm 46 v 50.
+* ease off on slip (`carry_slip_m` 2 mm -> re-squeeze 4 mm below the jaw): 99 v 99; lift
+  losses 24 -> 13, stow 29 -> 37 — the same objects fall later. Reverted (patch in scratch).
+* jaws LEVEL through the lift (LIFT_POSE wrist_flex 1.43 -> 0.4): 106 v 99, paired
+  +0.29 +- 0.33 (+0.33 / +0.25 per half) — not resolved; lift losses 24 -> 14, ball kept
+  12 -> 14 but lost in the stow 10 times. Jaws UP (0.0): 43 v 50 on 12 seeds. Not landed.
+The ball's stow losses are the stow's orientation (tool axis back to -0.4..-0.85 on the way
+to the bin) or the grasp point (centre 20-25 mm from the tool point at the lift) — a pick
+that takes a sphere through its centre, or a stow path that keeps the jaws level.
