@@ -330,3 +330,11 @@ Against the 25 Hz baseline (99 in bin, 24 seeds):
 The ball's stow losses are the stow's orientation (tool axis back to -0.4..-0.85 on the way
 to the bin) or the grasp point (centre 20-25 mm from the tool point at the lift) — a pick
 that takes a sphere through its centre, or a stow path that keeps the jaws level.
+* JAWS LEVEL THROUGH THE STOW TOO (lift wrist 0.415, STOW_HIGH/TURNED 1.25, solved by FK
+  for tool axis z = 0; the stow waypoints were already near level, -0.18): 98 v 99, paired
+  -0.04 +- 0.38 over 24 seeds; ball still lost in the stow 10 times. Traced with the jaws
+  at z -0.02, the ball extrudes exactly as before (jaw 15 -> 13 mm, centre 33 -> 36 mm from
+  the tool point, then out). GRAVITY IS NOT THE DRIVER — the pinch ahead of the centre is.
+  Carry orientation cannot fix it; the grasp point can. The ball's centre sits 20-25 mm
+  from the tool point at the lift, inside `deep_grip_m` 0.035, so b6cef3 never asked for
+  it (its yard balls: 6 kept of 24). A sphere needs its centre BETWEEN the pads.
