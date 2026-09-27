@@ -415,3 +415,18 @@ say which camera a run trained under — written on 0a9726's record by hand.
   Reverted (patch `grab_check_retry.patch` in scratch). Rejecting a grip does not make a
   better one: the pick has to LEARN to grip deep, with the 3-D fix as an input (new obs
   contract, pick retrain).
+
+## CORRECTION: the yard's fingertip grips come from its handover STATES (2026-09-27)
+
+The replay above ("the start is not the cause") started the env with its target tracker
+EMPTY, so the pick's first steps had no target — a replay bug. Seeded with a fresh fix (as
+the yard's is), 12 yard seeds at 25 Hz with the new mount, 150 pick starts, 61 lifts, 23
+shallow: from the 23 states that ended in a fingertip lift the env's settled grips are
+shallow 5 of 6 (picked 16/23); from the 38 deep ones, 4 of 18. From the env's OWN spawns,
+3 of 43. So the pick behaves the same in both; the yard hands it over in states that lead
+to fingertip grips, and the env scores "picked" at 8 cm of lift, which a fingertip grip
+survives and the carry does not. That is why b6cef3 (deep_grip_m) and 0281e5
+(sphere_centre_m) were nulls: their spawns rarely produced the grip they penalised.
+Retrain design this implies: start episodes from FULL yard handover states (arm joints +
+object pose + shape; `handover_bank` holds only object x, y and uprightness, with the arm
+at GRASP_POSE), score a deep grip, and give the pick the 3-D grip fix as an input.
