@@ -497,7 +497,6 @@ def test_the_wrist_depth_fix_says_where_the_object_sits_in_the_jaws():
     env = ME.MossPickEnv(seed=0)
     env.reset(seed=0)
     m, d = env.model, env.data
-    g = m.body(moss.GRIPPER_FRAME_BODY).id
     tcp = d.site_xpos[env.tcp_site].copy()
     R = d.site_xmat[env.tcp_site].reshape(3, 3).copy()
     # along the approach AND sideways along the tool's x, which the shoulder
