@@ -177,6 +177,17 @@ class TidyMossParams:
     #: handed objects at the edge of its reach and nudged them along instead
     #: of grasping. 0.41 is the middle of the box it trained on (0.36-0.47).
     band_far_locked_m: float = 0.41
+    #: SMALL THINGS, STRAIGHT DOWN (2026-09-27). The jaws can point straight
+    #: down at floor height from 0.10 to 0.38 m (joint sweep; 9 deg at 0.40,
+    #: 18 at 0.42), and the pick USES that close in: at 0.24-0.30 m it shuts
+    #: on a card at 4 deg from vertical (7/7 picked), a block at 5 (12/12) —
+    #: at 0.38-0.42 m everything is taken 20-27 deg off vertical, card 5/7.
+    #: Big objects stay at `band_far_locked_m`: from a close handover a can or
+    #: tall can was lost on the lift. An object smaller than
+    #: `small_object_m` (detected size) is handed over at `band_far_small_m`.
+    size_aware_handover: bool = True
+    small_object_m: float = 0.08
+    band_far_small_m: float = 0.28
     #: How long to spend nudging into the band before handing over anyway. A
     #: cap, not a target: a can the base cannot line up is still worth an
     #: out-of-band attempt, because the alternative is no attempt at all.
@@ -567,6 +578,7 @@ class TidyMoss:
         self._dropped = False
         self._drop_from: dict[str, float] | None = None
         self._carry_jaw: float | None = None
+        self._fix_size: float | None = None
         self._lift_z0: float | None = None
         self._low_since: float | None = None
         self._grip_from_t = 1e9
@@ -618,10 +630,14 @@ class TidyMoss:
                 continue                       # its own bin's contents
             if self._is_written_off(x, y):
                 continue                       # tried, could not collect
-            out.append((r, x, y))
+            # its physical SIZE, from the same detection: the detector ranges
+            # each object by its own size, so range x angular width is it
+            size = 2.0 * r * math.tan(max(float(det.width), 1e-4) / 2.0)
+            out.append((r, x, y, size))
         if not out:
             return None
-        _r, x, y = min(out)
+        _r, x, y, size = min(out)
+        self._fix_size = float(size)
         return (x, y)
 
     def _range(self, det) -> float:
@@ -873,6 +889,9 @@ class TidyMoss:
         lo, hi, ymax = moss.PICK_HANDOVER_BOX
         if self._flags.get("pick", {}).get("base_lock"):
             hi = min(hi, self.p.band_far_locked_m)
+            if (self.p.size_aware_handover and self._fix_size is not None
+                    and self._fix_size < self.p.small_object_m):
+                hi = min(hi, self.p.band_far_small_m)
         x, y = float(fix[0]), float(fix[1])
         if abs(y) > ymax:
             # Turning is the caller's yaw term; keep a little forward creep

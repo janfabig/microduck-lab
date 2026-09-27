@@ -188,3 +188,13 @@ diff the per-term reward budget of ad9876 vs a fine-tune on the same episodes.
   default 0.41 m it gives 33/64 v 28/64 (8 seeds, paired +0.62 +- 0.68). 0.30 m + 10 mm =
   24/64: the close-in handover does NOT yet beat 0.41 m — losses during the LIFT (8-13 per 4
   seeds) are what remains. Handover stays 0.41 m; squeeze 10 mm is the default.
+
+## Small things, straight down — a size-aware handover
+
+The jaws can point straight down at floor height from 0.10 to 0.38 m (9 deg at 0.40, 41 at
+0.46; joint sweep). 478dad USES that close in — at 0.24-0.30 m it shuts on a card at 4 deg
+from vertical (7/7), a block at 5 (12/12); at 0.38-0.42 m everything is 20-27 deg off, card
+5/7. tidy_moss now sizes each detection (range x angular width) and hands an object smaller
+than 8 cm over at 0.28 m, bigger ones at 0.41 m (a close handover lost cans on the lift).
+moss-yard 8 seeds: 37/64 against 32/64 (paired +0.62 +- 0.56; cans 9 -> 14). The card stays
+0/8: the head camera sees a 4 mm card 15 times in 300 s — it is rarely targeted at all.
