@@ -88,7 +88,16 @@ from .runtime import REGISTRY, Brain, Intent, Senses  # noqa: F401
 #: against 62%) — that is the criterion it was trained against, and the same
 #: criterion measured WORSE delivery under optimisation, so crediting it
 #: would be crediting the proxy that failed.
-SHIPPED_RUN = "teach-moss_pick-5e9df7"
+#:
+#: 2026-09-26: SWITCHED to `teach-moss_pick-ad9876`, the six-shape pick, once
+#: the brain could run it as it trained (wrist-camera slots, base locked —
+#: read off its run.json by `_flags`) and hand it objects where it trained
+#: (per-object range, size-relative carry squeeze). moss-yard, 12 seeds x
+#: 300 s, cans + block + squat + ball: ad9876 38/72, 5e9df7 37/72 (paired
+#: +0.08 +- 0.42 per seed — a tie on the total); ad9876 delivers blocks 6/12
+#: and balls 5/12 against 1/12 and 2/12, 5e9df7 squat cans 12/12 against 7/12.
+#: Chosen for the shapes. Reversible: put "teach-moss_pick-5e9df7" back.
+SHIPPED_RUN = "teach-moss_pick-ad9876"
 #: One trained policy per LEG of the loop, each under `moss.CONTRACT_ID` —
 #: the three envs share one 32-slot observation and one 8-action layout, so a
 #: session is interchangeable and only the state that drives it differs. A leg
