@@ -138,3 +138,20 @@ Default brain unchanged (5e9df7 has no extra inputs).
   end-count-only A/B, 14 v 13, could not see the wedge.)
 * A bin check without an upper height counted cans CARRIED over the footprint as "in the
   bin" and invented a leak of delivered cans; with the rim bound nothing leaves the bin.
+
+## The too-close stop was the RANGE, and the lift opened the jaws on small objects
+
+* tidy_moss ranged every detection with a CAN's radius (`can_radius_m`, a workaround from
+  before the arena passed each prop's own size to the detector). In moss-yard every other
+  shape read ~0.2 m farther than it stood (block 0.52 v 0.26, ball 0.53 v 0.30, squat 0.51 v
+  0.31; cans +-0.01): the robot drove 20 cm too close (deploys timed out) and the pick reached
+  20 cm past the object. `range_from_detector` (on) takes the detector's per-object
+  `range_est`: all shapes within +-4 cm, handovers at 0.35-0.49 m — inside the pick's box.
+* The lift set the jaw to the can's carry squeeze (27 mm) — WIDER than a block or ball, so it
+  opened on them: blocks lifted 21 times, balls 16, none kept. `carry_jaw_relative` (on):
+  carry at the achieved jaw minus 6 mm (the interference the 27 mm gave a can).
+
+moss-yard, 12 seeds x 300 s, 6 objects: 5e9df7 37/72 (can 22/36 block 1 squat 12 ball 2 of 12),
+ad9876 (base locked, wrist inputs) 38/72 (can 20/36 block 6 squat 7 ball 5); paired +0.08 +-
+0.42 per seed. Both ~3.1 objects per run against ~2.2 before these fixes; only ad9876 delivers
+blocks and balls. The brain still ships 5e9df7 — switching is a decision, not yet made.

@@ -84,12 +84,12 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
-import zlib
 import math
 import os
 import re
 import time
 import traceback
+import zlib
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path

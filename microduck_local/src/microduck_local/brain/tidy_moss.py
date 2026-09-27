@@ -202,6 +202,13 @@ class TidyMossParams:
     #: What to hold it at — `moss.GRASP_JAW_CTRL_M`, the gentlest setting the
     #: grasp sweep measured that still holds (6 mm of interference).
     carry_jaw_m: float = moss.GRASP_JAW_CTRL_M
+    #: ...as INTERFERENCE, not a position: carry at the jaw's ACHIEVED
+    #: position when the lift starts minus this. 27 mm is 6 mm of squeeze on
+    #: a 66 mm can but WIDER than a 40 mm block or a 50 mm ball, so the lift
+    #: opened the jaws on them — MEASURED in moss-yard (2026-09-26), blocks
+    #: lifted 21 times and balls 16 and not one survived the lift.
+    carry_interference_m: float = 0.006
+    carry_jaw_relative: bool = True
     #: ABANDON THE CARRY WHEN THE CAN IS GONE. The scripted stow never asked
     #: whether it was still holding anything: it ran all three ramps and
     #: opened the jaws over the bin regardless. MEASURED, only 31% of lifts
@@ -336,6 +343,16 @@ class TidyMossParams:
     #: What the detector models an upright can as: `Prop.radius()` is the
     #: largest half-extent, so for a 66 x 115 mm can it is 0.0575 m.
     can_radius_m: float = 0.0575
+    #: Take range from the DETECTOR's per-object estimate (`range_est`), not
+    #: from a can's radius. MEASURED in moss-yard (2026-09-26): with the can's
+    #: radius, every non-can object read ~0.2 m FARTHER than it stood — block
+    #: 0.52 m v 0.26 true, ball 0.53 v 0.30, squat 0.51 v 0.31, cans +-0.01 —
+    #: so the robot drove 20 cm too close (the arm unfolded into the object:
+    #: 16-30% of deploys timed out) and the pick was told to reach 20 cm past
+    #: it (0 ball lifts, block never kept). `range_est` has been per-object
+    #: since the arena passed each prop's own size to the detector; the can
+    #: radius was the workaround for the class-constant bug that preceded it.
+    range_from_detector: bool = True
     max_bearing: float = 1.05          # ~60 deg
     min_x: float = 0.30
     #: How many times a can may be attempted before it is written off, and
@@ -497,6 +514,7 @@ class TidyMoss:
         self._fold_seeded = False
         self._dropped = False
         self._drop_from: dict[str, float] | None = None
+        self._carry_jaw: float | None = None
         self._grip_from_t = 1e9
         self._grip_ticks = 0
         self.state = "search"
@@ -571,6 +589,8 @@ class TidyMoss:
         the class it is reporting, which is why it is a parameter and not a
         constant taken from the MJCF.
         """
+        if self.p.range_from_detector:
+            return float(det.range_est)
         half = max(float(det.width) / 2.0, 1e-4)
         return self.p.can_radius_m / math.tan(half)
 
@@ -982,6 +1002,8 @@ class TidyMoss:
             self._act = np.zeros(moss.NUM_ACTIONS, np.float32)
             self._policy_cmd = None
             self._last_policy_t = -1e9
+        if state not in ("lift", "stow", "release"):
+            self._carry_jaw = None
         self.state, self._t0 = state, t
         self._fold_seeded = False
         # A new state ramps from where the arm IS now, not from the last
@@ -1411,7 +1433,15 @@ class TidyMoss:
         if (p.hold_jaw and self.state in ("lift", "stow")
                 and isinstance(arm, dict)
                 and moss.GRIPPER_JOINT not in arm):
-            arm = {**arm, moss.GRIPPER_JOINT: p.carry_jaw_m}
+            jaw = p.carry_jaw_m
+            if p.carry_jaw_relative:
+                if self._carry_jaw is None and senses.arm is not None:
+                    got = float(senses.arm.get(moss.GRIPPER_JOINT,
+                                               p.carry_jaw_m))
+                    self._carry_jaw = max(0.0, got - p.carry_interference_m)
+                if self._carry_jaw is not None:
+                    jaw = self._carry_jaw
+            arm = {**arm, moss.GRIPPER_JOINT: jaw}
         return Intent(twist=twist, arm=arm, note=note)
 
     def inputs(self) -> dict:

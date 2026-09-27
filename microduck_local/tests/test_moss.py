@@ -460,23 +460,58 @@ def test_the_jaw_window_is_where_the_measurement_put_it():
 
 # ------------------------------------------------------------ the tidy brain
 
-def test_the_tidy_brain_ranges_by_width_not_by_the_class_radius():
-    """The 230 mm bug, as a test.
+def test_the_tidy_brain_ranges_each_object_by_its_own_size():
+    """The 230 mm bug, and the 200 mm one after it, as a test.
 
-    `Detection.range_est` is derived from a per-CLASS nominal radius, and a
-    66 x 115 mm can is not the playroom block that class was sized on. The
-    brain must invert the APPARENT WIDTH against the can's own radius
-    instead: a sphere of radius R at range r subtends 2*atan(R/r).
+    First the detector's `range_est` came from a per-CLASS radius sized on a
+    playroom block, so a can read 0.259 m at 0.491 m; the brain answered by
+    inverting the apparent width against a CAN's radius. Then the arena began
+    passing each prop's own size to the detector, and the can-radius route
+    became the bug: MEASURED in moss-yard (2026-09-26), a block read 0.52 m at
+    0.26, a ball 0.53 at 0.30 — the robot drove 20 cm too close and the pick
+    reached 20 cm past everything that was not a can. So the brain takes
+    `range_est`, and this checks it is right for a BLOCK in the yard.
     """
+    import dataclasses
+
     from microduck_local.brain.tidy_moss import TidyMoss
+    from microduck_local.world import scenario as S
+    from microduck_local.world.arena import World
 
     brain = TidyMoss()
+    assert brain.p.range_from_detector
+    det = SimpleNamespace(width=0.1, range_est=0.42)
+    assert brain._range(det) == pytest.approx(0.42)
+    # the can-width route still exists for a lab that wants it
+    brain.p = dataclasses.replace(brain.p, range_from_detector=False)
     R = brain.p.can_radius_m
-    for truth in (0.30, 0.50, 0.90):
-        det = SimpleNamespace(width=2 * math.atan(R / truth), range_est=truth / 1.9)
-        assert brain._range(det) == pytest.approx(truth, rel=1e-6)
-        # and the planted regression: the class-radius route is ~half of it
-        assert abs(det.range_est - truth) > 0.1
+    det = SimpleNamespace(width=2 * math.atan(R / 0.5), range_est=0.1)
+    assert brain._range(det) == pytest.approx(0.5, rel=1e-6)
+
+    sc = S.Scenario.from_dict(json.loads(
+        Path(__file__).resolve().parents[1].joinpath(
+            "scenarios/moss-yard.json").read_text()))
+    w = World(sc)
+    r = w.ducks["m0"]
+    errs = {}
+    for leg in ((0.35, 0.0, 3.0), (0.0, 1.0, 1.6)) * 4:
+        for _ in range(int(leg[2] / 0.02)):
+            r.driver.set_cmd(leg[0], leg[1], w.data.time)
+            w.step()
+            last = r.detector.last
+            for d in (last.detections if last else []):
+                if d.cls != "toy" or not d.name:
+                    continue
+                cam = w.data.xpos[w.model.body(d.name).id]
+                x, y, _yaw = r.driver.pose(w.data)
+                true = math.hypot(cam[0] - x, cam[1] - y)
+                errs.setdefault(d.name.rstrip("0123456789"), []).append(
+                    d.range_est / true)
+    assert "block" in errs and "can" in errs, sorted(errs)
+    for shape, ratios in errs.items():
+        # within 25% of the truth for EVERY shape (lens offset and noise);
+        # the can-radius route put the block at ~2x
+        assert 0.75 < float(np.median(ratios)) < 1.25, (shape, np.median(ratios))
 
 
 def test_the_tidy_brain_ignores_its_own_bin_and_anything_behind_it():
