@@ -388,6 +388,52 @@ def test_lab_state_round_trip(fake_popen, monkeypatch, tmp_path):
                            str(live)]
 
 
+def _trainee(duck_id, created_at, tmp_path):
+    d = _fake_duck(duck_id, onnx_path=str(tmp_path / f"{duck_id}.onnx"))
+    d.created_at = created_at
+    return d
+
+
+def test_a_restart_brings_back_only_the_newest_trainee(fake_popen, monkeypatch,
+                                                       tmp_path, capsys):
+    """Training dies with the server, so every trainee a restart restores is
+    a FINISHED job's — and each one steps a full MuJoCo env in the 50 Hz
+    loop. Restored all, they piled up one per job: on 2026-09-27 eight
+    finished MOSS trainees pinned the lab at ~90% of a core and /sim ran at
+    RTF 0.12 (7% once they were removed). The newest stays — a finished run's
+    card is still looked at after a restart, and a G1 job once needed its
+    restored trainee to guess the body — and "newest" is by creation time,
+    not by where a reused slot happens to sit in the list."""
+    monkeypatch.setattr(V, "_onnx_infer", lambda p: V._zero_infer)
+    V.save_lab_state([
+        _fake_duck("d0", onnx_path=str(tmp_path / "d0.onnx")),
+        _trainee("trainee", 100.0, tmp_path),
+        _trainee("trainee3", 400.0, tmp_path),     # newest, NOT listed last
+        _trainee("trainee2", 300.0, tmp_path),
+        _trainee("trainee4", 200.0, tmp_path),
+    ])
+    restored = V.restore_ducks(V.lab_state_path())
+    assert [d.id for d in restored] == ["d0", "trainee3"]
+    assert restored[1].created_at == 400.0         # survives the round trip
+    assert "not restoring 3 finished trainee" in capsys.readouterr().out
+    # ...and they stay gone: the file no longer lists them.
+    kept = json.loads(V.lab_state_path().read_text())["ducks"]
+    assert [e["id"] for e in kept] == ["d0", "trainee3"]
+
+
+def test_an_old_lab_state_keeps_its_last_listed_trainee(fake_popen, monkeypatch,
+                                                        tmp_path):
+    """Files from before `createdAt` fall back to list order (a new trainee
+    is appended to the roster when its job starts)."""
+    monkeypatch.setattr(V, "_onnx_infer", lambda p: V._zero_infer)
+    V.save_lab_state([_fake_duck("trainee", onnx_path=str(tmp_path / "a.onnx")),
+                      _fake_duck("trainee2", onnx_path=str(tmp_path / "b.onnx")),
+                      _fake_duck("d0", onnx_path=str(tmp_path / "c.onnx"))])
+    assert "createdAt" not in V.lab_state_path().read_text()
+    restored = V.restore_ducks(V.lab_state_path())
+    assert [d.id for d in restored] == ["trainee2", "d0"]
+
+
 def test_restore_skips_unloadable_entries(fake_popen, monkeypatch, tmp_path, capsys):
     def only_stand(pid):
         if pid != "pollen:alpha_stand":

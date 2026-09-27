@@ -390,6 +390,9 @@ class Duck:
         # or neither (a zero-infer trainee before its first snapshot).
         self.policy_id = policy_id
         self.onnx_path = onnx_path
+        #: When this roster slot was made — how a restart tells the newest
+        #: trainee from the finished ones (`restore_ducks`).
+        self.created_at = time.time()
         # True while this duck runs a chain-level "whole trick" assign — its
         # env rehearses full-arc spawns (see showcase_env_kwargs). Persisted
         # so a restart doesn't silently demote the duck to standing starts
@@ -2090,7 +2093,9 @@ def save_lab_state(ducks: list[Duck]) -> None:
          "onnxPath": d.onnx_path,
          "robot": getattr(d, "robot", "microduck"),
          # getattr: tests build rosters from bare namespaces without the flag
-         "showcase": bool(getattr(d, "showcase", False))}
+         "showcase": bool(getattr(d, "showcase", False)),
+         **({"createdAt": d.created_at}
+            if getattr(d, "created_at", None) is not None else {})}
         for d in ducks
     ]}
     # ~11 call sites, one of them inside the sim loop — the writer that most
@@ -2098,13 +2103,43 @@ def save_lab_state(ducks: list[Duck]) -> None:
     _atomic_write_json(lab_state_path(), state)
 
 
+def _newest_trainee_only(state: dict, path: Path) -> list[dict]:
+    """The saved roster with every trainee but the NEWEST dropped — and the
+    file rewritten to match, so they stay dropped.
+
+    Training dies with the server, so each trainee a restart finds belongs to
+    a finished job, and each one would step a full MuJoCo env in the 50 Hz
+    loop. `reap_trainee_ducks` cannot clear them (no job claims a restored
+    duck, on purpose), so they piled up one per job: on 2026-09-27 eight
+    finished MOSS trainees pinned the lab at ~90% of a core and /sim ran at
+    RTF 0.12. The newest is kept, as `reap_trainee_ducks` keeps the newest
+    job's: its finished card is still looked at after a restart, and a G1 job
+    once needed a restored trainee to guess its body. Newest by `createdAt`;
+    files from before it go by list order (a trainee joins the roster when
+    its job starts).
+    """
+    entries = list(state.get("ducks", []))
+    tr = [(i, e) for i, e in enumerate(entries) if is_trainee(str(e.get("id")))]
+    if len(tr) <= 1:
+        return entries
+    keep = max(tr, key=lambda ie: (ie[1].get("createdAt") is not None,
+                                   ie[1].get("createdAt") or 0.0, ie[0]))[0]
+    gone = {i for i, _ in tr} - {keep}
+    print(f"[lab] not restoring {len(gone)} finished trainee(s): "
+          + ", ".join(str(entries[i].get("id")) for i in sorted(gone)))
+    entries = [e for i, e in enumerate(entries) if i not in gone]
+    _atomic_write_json(path, {**state, "ducks": entries})
+    return entries
+
+
 def restore_ducks(path: Path) -> list[Duck]:
     """Rebuild the roster from lab-state.json. Training jobs die with the
     server, so a trainee/helper comes back frozen at its last live.onnx
     snapshot; entries whose brain can't be loaded any more are skipped."""
     state = json.loads(path.read_text())
+    entries = _newest_trainee_only(state, path)
     ducks: list[Duck] = []
-    for i, entry in enumerate(state.get("ducks", [])):
+    for i, entry in enumerate(entries):
         try:
             if entry.get("policy"):
                 infer = load_policy_infer(entry["policy"])
@@ -2147,6 +2182,8 @@ def restore_ducks(path: Path) -> list[Duck]:
                   f"{type(e).__name__}: {e}")
             continue
         duck.showcase = skw is not None
+        if entry.get("createdAt") is not None:
+            duck.created_at = float(entry["createdAt"])
         ho = handoff_for(run_path) if skw is not None else None
         duck.handoff_infer, duck.handoff_label = ho if ho else (None, None)
         ducks.append(duck)

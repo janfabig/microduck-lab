@@ -244,9 +244,13 @@ shown — the exact failure the section above exists to prevent.
 
 So, after the POST and before saying "you can watch it":
 
-1. **A real frame carries the trainee** (`scripts/stage_check.py`). Stale
-   trainees from finished jobs are NOT always reaped, so expect to see old
-   ones beside the live one — the live trainee's id is in `/teach/status`.
+1. **A real frame carries the trainee** (`scripts/stage_check.py` — read
+   ALL its lines). Finished jobs' trainees are reaped when the next job
+   starts, and a restart brings back only the NEWEST trainee (each one steps
+   a full env in the 50 Hz loop: eight left behind pinned the lab at ~90% of
+   a core, /sim at RTF 0.12). Expect at most one old one beside the live one
+   — the live trainee's id is in `/teach/status`. Clear one by hand with
+   `{"remove_duck": "<id>"}` on the lab websocket.
 2. **Tell them the URL, with the port of the lab you actually launched on.**
    `http://localhost:63317` reads `127.0.0.1:8788` by default; a scratch lab
    needs `?lab=127.0.0.1:8799`. A tab left pointing at the other one is a tab
