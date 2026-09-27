@@ -221,3 +221,29 @@ term pays turning towards the end-to-end grip under this axis) in a litter fine-
 * the wrist's STARTING angle: pre-rotated for the end-to-end grip 12/40, for across 13/40,
   as spawned 16/40 (same seeds). The policy re-aims during the approach; the start is not
   the lever. End-to-end in 16/16 picks is what survives, not what the policy chooses.
+
+## Lift losses are shallow grips (2026-09-27)
+
+Shipped brain (478dad, size-aware handover), moss-yard 12 seeds x 300 s, 69 carries held at
+the lift: tool-point-to-object distance at the lift start decides it. Under 35 mm: 50
+carries, 3 lost in the lift, 16 in the stow, 31 kept. 35 mm and over: 19 carries, 12 lost
+in the lift, 3 in the stow, 3 kept. Most handovers were at 0.40-0.54 m (not close in).
+* NOT the squeeze: the lift resets the jaw command from the pick's 0-14 mm to achieved-10 mm
+  and the can slides out 0.2 s later, which looks causal — but keeping the pick's tighter
+  command (8 seeds, same seeds) gave 24 v 23 in the bin, early lift losses 4 v 4. Removed.
+* NOT sensed: the wrist camera's range at the lift does not separate deep from shallow
+  (shallow 47-101 mm, deep 62-106), so the brain cannot gate on it.
+* The ball is its own problem: 11/17 lost in the STOW, all deep grips (a sphere slips on
+  the swing).
+* The lever tried: 478dad + `deep_grip_m` 0.035 (only "picked" when held deep), one knob,
+  every other 478dad setting (b6cef3). b57bbb (0.04 from ad9876) is not evidence: it trained
+  without `gap_from_tcp`.
+* RESULT, b6cef3 (478dad + deep_grip_m 0.035): env 35/40 deep, but moss-yard 24 seeds
+  76 v 71 in bin (paired +0.21 +- 0.29) and shallow grips at the lift 55 v 48. NOT shipped.
+  The env does not produce the yard's shallow grips — shallow share of picks: spawn box
+  0.22-0.34 m 2-5%, 0.40-0.54 m 12-14%, from the 310 real yard handovers 9-13%, yard ~33% at
+  the lift — and the brain's lift trigger replayed in the env almost never fires on a shallow
+  grip (2/31, 1/12). Yard can sizes are inside the env's range. Unfound: what makes the yard's
+  grips shallow. Next instrument: snapshot the yard's full state (arm qpos, object pose and
+  size) at `creep` for shallow cases and replay it in the env — if the env grips deep from
+  the same state, the difference is the world's physics or the brain, not the start.
