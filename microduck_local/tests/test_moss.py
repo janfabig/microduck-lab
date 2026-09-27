@@ -1804,6 +1804,43 @@ def test_a_valid_start_stow_episode_begins_with_the_object_in_the_jaws():
         assert can[2] > env.prop.half_height + 0.03, (s, env.prop.id, can[2])
 
 
+def test_a_sphere_counts_as_picked_only_through_its_centre(monkeypatch):
+    """A ball pinched ahead of its centre is squeezed out of the jaws, level
+    or not: 478dad's env ball picks under 16 mm from the pad midpoint held
+    through the lift and swing 33/33, over 20 mm 2/9. The criterion is
+    recorded (run.json) and measured from the PADS, not the tool point."""
+    from types import SimpleNamespace as NS
+
+    import mujoco
+
+    from microduck_local.robots.moss_env import GraspProp, MossPickEnv
+    from microduck_local.robots.registry import registry
+
+    body = registry()["moss"]
+    monkeypatch.setenv("MICRODUCK_MOSS_SPHERE_CENTRE", "0.016")
+    assert body.train_env_kwargs(NS(task="pick")).get("sphere_centre_m") == 0.016
+    monkeypatch.setenv("MICRODUCK_MOSS_SPHERE_CENTRE", "0")
+    assert body.train_env_kwargs(NS(task="pick")).get("sphere_centre_m") == 0.0
+    ball = GraspProp(id="ball", shape="sphere", size=(0.025,), mass=0.02,
+                     jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
+                     grasp_height_m=moss.GRASP_HEIGHT_M)
+    env = MossPickEnv(seed=0, prop=ball, sphere_centre_m=0.016)
+    env.reset(seed=0)
+    assert env.sphere_centre_m == 0.016
+    m, d = env.model, env.data
+    # jaw at 10 mm, where the pad midpoint sits ~15 mm off the tool point
+    d.qpos[m.joint(moss.GRIPPER_JOINT).qposadr[0]] = 0.010
+    mujoco.mj_forward(m, d)
+    mid = (d.geom_xpos[m.geom("pad_left").id]
+           + d.geom_xpos[m.geom("pad_right").id]) / 2.0
+    d.qpos[env.can_qadr:env.can_qadr + 3] = mid
+    mujoco.mj_forward(m, d)
+    assert env._sphere_off_centre() < 1e-6
+    d.qpos[env.can_qadr + 2] = mid[2] + 0.02
+    mujoco.mj_forward(m, d)
+    assert env._sphere_off_centre() == pytest.approx(0.02, abs=1e-6)
+
+
 def test_the_progress_measure_a_pick_trained_on_is_recorded_and_honoured(monkeypatch):
     """`MICRODUCK_MOSS_GAP_TCP` was an import-time constant the trainer never
     passed and run.json never recorded. ad9876 trained with it ON (replay:

@@ -910,6 +910,14 @@ SUCCESS_LIFT_M = 0.08
 #: delivered 0/7 — every one slid out between the pads on the lift or the
 #: swing — while `_held` accepts anything within 55 mm.
 DEEP_GRIP_M = float(os.environ.get("MICRODUCK_MOSS_DEEP_GRIP", "0") or 0.0)
+#: ...AND A SPHERE HELD THROUGH ITS CENTRE: its centre within this of the
+#: midpoint between the pads (0 = off). The pads pinching a ball AHEAD of its
+#: centre squeeze it out along the jaw, level or not. MEASURED on 478dad's
+#: env ball picks (2026-09-27, 120 episodes, then the yard's lift ramp and
+#: swing to STOW_HIGH): centre under 16 mm from the pad midpoint 33/33 kept,
+#: 16-20 mm 9/12, over 20 mm 2/9. The tool point is no reference for this —
+#: the pad midpoint moves 10-15 mm off it as the jaw closes.
+SPHERE_CENTRE_M = float(os.environ.get("MICRODUCK_MOSS_SPHERE_CENTRE", "0") or 0.0)
 #: START WHERE THE YARD HANDS OVER. `data/moss_pick_handovers_yard.npy`: 310
 #: real handovers — the object nearest the jaws the tick tidy_moss enters
 #: `creep` (moss-yard seeds 10-41; objects already in the bin removed).
@@ -1122,6 +1130,7 @@ class MossPickEnv(gym.Env):
         pick_box: str = PICK_BOX,
         gap_from_tcp: bool | None = None,
         litter: bool | None = None,
+        sphere_centre_m: float | None = None,
     ):
         if task not in TASKS:
             raise SystemExit(f"unknown --task {task!r} for moss "
@@ -1139,6 +1148,8 @@ class MossPickEnv(gym.Env):
                 "measured is not a curriculum")
         self.rung = int(pick_rung)
         self.deep_grip_m = float(deep_grip_m)
+        self.sphere_centre_m = float(SPHERE_CENTRE_M if sphere_centre_m is None
+                                     else sphere_centre_m)
         #: A CONSTRUCTOR ARGUMENT, not only the import-time constant, so it
         #: reaches run.json. MEASURED 2026-09-27: ad9876 replays at +86/ep
         #: with it on (its training reported +88) and -3 with it off; every
@@ -1293,6 +1304,13 @@ class MossPickEnv(gym.Env):
         tcp = self.data.site_xpos[self.tcp_site]
         return float(math.hypot(float(can[0] - tcp[0]),
                                 float(can[1] - tcp[1])))
+
+    def _sphere_off_centre(self) -> float:
+        """How far the object's centre is from the midpoint between the
+        pads, m (`SPHERE_CENTRE_M`)."""
+        mid = (self.data.geom_xpos[self.model.geom("pad_left").id]
+               + self.data.geom_xpos[self.model.geom("pad_right").id]) / 2.0
+        return float(np.linalg.norm(self.data.xpos[self.can_body] - mid))
 
     def _closed_on_can(self) -> bool:
         """Jaws shut on the can, whether or not it is off the ground yet.
@@ -1871,6 +1889,9 @@ class MossPickEnv(gym.Env):
             _d = float(np.linalg.norm(self.data.xpos[self.can_body]
                                       - self.data.site_xpos[self.tcp_site]))
             picked = _d <= self.deep_grip_m
+        if (picked and self.sphere_centre_m > 0.0
+                and self.prop.shape == "sphere"):
+            picked = self._sphere_off_centre() <= self.sphere_centre_m
         if picked:
             rew += SUCCESS_BONUS
         # SHOVED IT INSTEAD OF REACHING FOR IT: over before the grip, so the

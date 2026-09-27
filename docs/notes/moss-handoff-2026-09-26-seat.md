@@ -338,3 +338,45 @@ that takes a sphere through its centre, or a stow path that keeps the jaws level
   Carry orientation cannot fix it; the grasp point can. The ball's centre sits 20-25 mm
   from the tool point at the lift, inside `deep_grip_m` 0.035, so b6cef3 never asked for
   it (its yard balls: 6 kept of 24). A sphere needs its centre BETWEEN the pads.
+* The criterion, measured first: 478dad's env ball picks (120 episodes) run through the
+  yard's lift ramp and swing to STOW_HIGH at the 10 mm carry squeeze — centre under 16 mm
+  from the PAD MIDPOINT 33/33 kept, 16-20 mm 9/12, over 20 mm 2/9 (median 14 mm; the pad
+  midpoint is 10-15 mm off the tool point once the jaw closes, so the tool point is the
+  wrong reference). `sphere_centre_m` (recorded kwarg, `MICRODUCK_MOSS_SPHERE_CENTRE`):
+  a sphere is only "picked" with its centre within that of the pad midpoint. Test planted
+  against a tool-point reference. Fine-tune 0281e5 = 478dad + sphere_centre_m 0.016,
+  one knob (run.json diff checked).
+* RESULT 0281e5: did NOT learn to centre. Env ball picks 58/120 (478dad 54/120), centre
+  from the pad midpoint median 15.7 mm (14.1), held through lift + swing 44/58 (44/54).
+  Its training "picked" 30-33/40 is across all six shapes. Balls are 1/6 of episodes and
+  the criterion only withholds the success bonus — too little pressure, or the centred
+  grasp is never sampled (see "reward cannot fix exploration"). Not shipped; no yard run.
+  Next if pursued: a ball-only fine-tune (all episodes spheres), then the yard.
+
+## The wrist camera was mounted in the wrong frame (2026-09-27)
+
+`gripper_frame_link`'s +z is the APPROACH (tool point at (-0.008, 0, -0.014) in it at
+GRASP, LIFT, DROP, TUCK_POSE_V04 and home; housing z -0.098..-0.042, ~12 x 12 cm; jaws
+slide on the 41/221 deg diagonal). `ARM_CAMERA_POS` (-0.060, 0, +0.065) read it as "up":
+the lens sat 6.5 cm PAST the jaw tips, under the floor in 32% of frames within 10 cm of a
+grasp, looking up. The old sweep searched only that half-space. Every wrist reading every
+pick leg trained on (slots 26, 28-30 via `_sense_arm` / `moss_wrist`) came from there.
+* Re-swept with occlusion (478dad frames, 5 rays per object against the robot's visual
+  meshes and the floor): side face at the housing's back edge, (0.021, -0.080, -0.100),
+  aimed at (-0.008, 0, 0.15): seen 89% inside 10 cm (old 60%), 94% inside 5 cm; 2.2 cm
+  clear of the housing, 2.1 cm of the forearm over the whole wrist range. A plateau
+  (88-90% over 290-340 deg, r 8.5-9.5 cm). The jaw-travel diagonal sees 27-46%.
+* What it does to the slots (478dad, trained settings): wrist attitude fresh 57 -> 92% at
+  10-20 cm, 7 -> 70% at 20-40 cm. Old slot 26 read a near-CONSTANT 7-9 cm from 40 cm to
+  contact (the lens rode past the jaws); new reads 15-20 cm. z +1.6 on 478dad's
+  normalizer: inside its support, so a warm start is not the frozen-normalizer trap.
+* 478dad under the new mount, 248 paired seeds: eval env (cans) 87.1 -> 86.3% (null,
+  sign p 0.86); its trained six-shape settings 89.1 -> 84.7% (-4.4 +- 1.8, 16 v 5
+  discordant, p 0.03). moss-yard 24 x 300 s: 100 v 93 in the bin, paired -0.29 +- 0.46
+  per seed (CI -1.24..+0.65, both halves) — null, unresolved at this size.
+* `moss_bin.BIN_LOOK_POSE` sees 0% of the bin from the new mount (drop_target only; off by
+  default). Re-searched: (-1.776, -1.195, 0.559, 1.507, 2.338), 94% of the floor; the whole
+  floor needs wrist_flex on its stop.
+* NOT landed yet: every pick baseline in this note is on the old mount, so landing it moves
+  them. Patch + test (fails on the old mount): `wrist-mount.patch` in scratch. Next: land
+  it, retrain the pick warm from 478dad under the new mount, A/B against 478dad-on-old.
