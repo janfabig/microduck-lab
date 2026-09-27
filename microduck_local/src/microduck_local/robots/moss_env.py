@@ -679,7 +679,50 @@ WRIST_DRILL = os.environ.get("MICRODUCK_MOSS_WRIST_DRILL", "0") not in ("", "0")
 WRIST_DRILL_S = 3.0
 
 
-def sample_prop(rng) -> GraspProp:
+#: THE LITTER SET (2026-09-27): what a litter-picking robot really meets,
+#: as rigid lumps — a flex sheet costs more than the rest of the env. Off by
+#: default so every earlier run draws the same six shapes it always did.
+LITTER_KINDS = ("paper", "butt", "cap")
+LITTER = os.environ.get("MICRODUCK_MOSS_LITTER", "0") not in ("", "0")
+
+
+def sample_litter(rng, kind: str) -> GraspProp:
+    """One of the litter lumps."""
+    if kind == "paper":
+        # crumpled paper: a light wad that SITS where it lands — the high
+        # rolling coefficient is what makes it a wad and not a ball (condim 6
+        # so MuJoCo honours it; condim 3 silently ignores rolling friction)
+        return GraspProp(id="paper", shape="sphere",
+                         size=(float(rng.uniform(0.015, 0.030)),),
+                         mass=float(rng.uniform(0.002, 0.006)),
+                         jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
+                         grasp_height_m=moss.GRASP_HEIGHT_M,
+                         condim=6, friction=(0.7, 0.01, 0.03),
+                         rgba=(0.94, 0.93, 0.88, 1.0))
+    if kind == "butt":
+        # cigarette butt, lying: a BOX (the yard can yaw a prop but not tip
+        # it, and a standing cylinder butt is not litter anyone meets)
+        return GraspProp(id="butt", shape="box",
+                         size=(float(rng.uniform(0.012, 0.017)),
+                               float(rng.uniform(0.0035, 0.0045)),
+                               float(rng.uniform(0.0035, 0.0045))),
+                         mass=float(rng.uniform(0.0003, 0.0008)),
+                         jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
+                         grasp_height_m=moss.GRASP_HEIGHT_M,
+                         condim=4, friction=(0.8, 0.005, 0.0001),
+                         rgba=(0.95, 0.72, 0.42, 1.0))
+    # bottle cap
+    return GraspProp(id="cap", shape="cylinder",
+                     size=(float(rng.uniform(0.014, 0.016)),
+                           float(rng.uniform(0.005, 0.007))),
+                     mass=float(rng.uniform(0.0015, 0.003)),
+                     jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
+                     grasp_height_m=moss.GRASP_HEIGHT_M,
+                     condim=6, friction=(0.6, 0.005, 0.002),
+                     rgba=(0.30, 0.55, 0.85, 1.0))
+
+
+def sample_prop(rng, litter: bool = False) -> GraspProp:
     """One piece of litter: shape, size and mass drawn per episode.
 
     Deliberately a FAMILY OF RIGID PRIMITIVES rather than a deformable sheet.
@@ -688,7 +731,10 @@ def sample_prop(rng) -> GraspProp:
     and most real litter is crumpled rather than flat — a lump is the honest
     cheap model, and a thin box stands in for a flattened card.
     """
-    kind = str(rng.choice(("can", "tall", "squat", "block", "card", "ball")))
+    kinds = ("can", "tall", "squat", "block", "card", "ball")
+    kind = str(rng.choice(kinds + LITTER_KINDS if litter else kinds))
+    if kind in LITTER_KINDS:
+        return sample_litter(rng, kind)
     if kind in ("can", "tall", "squat"):
         r = float(rng.uniform(0.022, 0.034))
         h = (float(rng.uniform(0.055, 0.090)) if kind == "tall"
@@ -1069,6 +1115,7 @@ class MossPickEnv(gym.Env):
         deep_grip_m: float = DEEP_GRIP_M,
         pick_box: str = PICK_BOX,
         gap_from_tcp: bool | None = None,
+        litter: bool | None = None,
     ):
         if task not in TASKS:
             raise SystemExit(f"unknown --task {task!r} for moss "
@@ -1109,6 +1156,7 @@ class MossPickEnv(gym.Env):
         self.base_lock = bool(base_lock)
         self.publish_proximity = bool(publish_proximity)
         self.prop_variety = bool(prop_variety)
+        self.litter = bool(LITTER if litter is None else litter)
         self.wrist_drill = bool(wrist_drill)
         if self.wrist_drill:
             # The drill is ABOUT the wrist, so it always starts somewhere in
@@ -1382,7 +1430,7 @@ class MossPickEnv(gym.Env):
         training on litter instead of on one particular can.
         """
         if self.prop_variety:
-            self.prop = sample_prop(self.rng)
+            self.prop = sample_prop(self.rng, self.litter)
             self._bind_model()
 
     def _bind_model(self) -> None:
@@ -3119,9 +3167,9 @@ class MossStowEnv(MossPickEnv):
         new = ()
         if self.bin_clutter > 0:
             n = int(self.rng.integers(0, self.bin_clutter + 1))
-            new = tuple(sample_prop(self.rng) for _ in range(n))
+            new = tuple(sample_prop(self.rng, self.litter) for _ in range(n))
         if self.prop_variety:
-            self.prop = sample_prop(self.rng)
+            self.prop = sample_prop(self.rng, self.litter)
         if self.prop_variety or new or self._clutter:
             self._clutter, self._clutter_poses = new, None
             self._bind_model()

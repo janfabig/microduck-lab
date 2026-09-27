@@ -1775,3 +1775,23 @@ def test_the_progress_measure_a_pick_trained_on_is_recorded_and_honoured(monkeyp
     off.reset(seed=0)
     assert on.gap_from_tcp and not off.gap_from_tcp
     assert on._reward_gap() != off._reward_gap()
+
+
+def test_the_litter_set_is_opt_in_and_draws_real_litter():
+    """`litter` adds a crumpled-paper wad, a cigarette butt and a bottle cap
+    to the six shapes; OFF, the draws are exactly the old six so every
+    earlier run and evaluation replays. The wad must actually SIT (rolling
+    friction is ignored under condim 3 — twice before in this repo)."""
+    from microduck_local.robots.moss_env import LITTER_KINDS, MossPickEnv, sample_prop
+
+    rng = np.random.default_rng(0)
+    off = {sample_prop(rng).id for _ in range(300)}
+    assert not off & set(LITTER_KINDS), off
+    rng = np.random.default_rng(0)
+    on = {sample_prop(rng, litter=True).id for _ in range(300)}
+    assert set(LITTER_KINDS) <= on, on
+    paper = next(p for p in (sample_prop(np.random.default_rng(s), True)
+                             for s in range(200)) if p.id == "paper")
+    assert paper.condim == 6 and paper.friction[2] >= 0.01
+    env = MossPickEnv(seed=1, prop_variety=True, litter=True)
+    assert env.litter
