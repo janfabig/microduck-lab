@@ -2000,6 +2000,8 @@ class MossBody(BodyBase):
             out["overspeed"] = _f("MICRODUCK_MOSS_OVERSPEED")
             out["arm_floor"] = _f("MICRODUCK_MOSS_ARM_FLOOR")
             out["low_approach"] = _f("MICRODUCK_MOSS_LOW_APPROACH")
+            out["handover_bank"] = _b("MICRODUCK_MOSS_HANDOVER_BANK")
+            out["deep_grip_m"] = _f("MICRODUCK_MOSS_DEEP_GRIP")
         if task == "stow":
             # The stow leg's own knobs. Same rule as the pick's: read the
             # ENVIRONMENT here so the lab's in-process preview shows the same

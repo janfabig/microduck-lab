@@ -119,3 +119,22 @@ the gap (+1); the base lock is fatal because the yard hands over beyond the arm'
 and it never lifts block/ball/squat in the yard. Its env skill does not transfer: the
 handover situations differ. Also open: only 5 of its 14 releases end in the bin.
 Default brain unchanged (5e9df7 has no extra inputs).
+
+## The pick handover, diffed (and the release wedge, measured directly)
+
+* First pick observation, yard vs env (ad9876): the LAST-ACTION slots carried the previous
+  leg's action (up to 680 sd off the env's zeros), a stale pick command carried between
+  attempts, the pick ran at 50 Hz (trained 25), and the arm was off GRASP_POSE (pan / wrist
+  sd 0.21-0.29) because 16-30% of deploys TIME OUT. `pick_clean_start` (on) zeroes the last
+  action and re-seeds the command at `creep`; `pick_at_control_hz` (off: ad9876 8 -> 1,
+  5e9df7 11 -> 10 at 25 Hz). Clean start moved the yard count inside the noise.
+* Handover bank (`data/moss_pick_handovers_yard.npy`, 310): 81% nearer than the rung-2
+  box, 42% lying. From these starts IN THE ENV ad9876 makes deep (<=40 mm) picks 64% with
+  the base locked (ball 16/20, block 11/16) — in the yard, ~none. `handover_bank` and
+  `deep_grip_m` added to the pick env, off by default.
+* RELEASE WEDGE: at the end of each release, the STOW_INSIDE descent left the can in the open
+  jaws 3/12 (the fold then carries it off); `release_high` 0/13. End count 11 -> 13 (noise
+  alone), folds home 66/78 v 60/72, over-speed 6 v 2. `release_high` now ON. (The first
+  end-count-only A/B, 14 v 13, could not see the wedge.)
+* A bin check without an upper height counted cans CARRIED over the footprint as "in the
+  bin" and invented a leak of delivered cans; with the rim bound nothing leaves the bin.

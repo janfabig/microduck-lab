@@ -84,6 +84,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import zlib
 import math
 import os
 import re
@@ -601,7 +602,7 @@ class WorldState:
                 d._moss_sensors = False
                 return None
             ts = moss_wrist.MossTargetSensors(w.model, prefix,
-                                              seed=hash(prefix) & 0xFFFF)
+                                              seed=zlib.crc32(prefix.encode()))
             props = [p for p in (self.scenario.props if self.scenario else [])
                      if getattr(p, "cls", "") == "toy" and p.mass > 0]
             ts.candidates = [(w.model.body(p.id).id, moss_wrist.geom_of(p))

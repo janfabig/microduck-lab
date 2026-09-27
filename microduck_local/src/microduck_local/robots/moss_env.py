@@ -852,6 +852,25 @@ GRIP_STALL_M = 0.002
 AIRBORNE_M = 0.010
 #: Success: the can is held this far above where it started.
 SUCCESS_LIFT_M = 0.08
+#: ...AND HELD DEEP: the object's centre within this of the tool point when
+#: it is lifted (0 = off, as every earlier run trained). MEASURED in moss-yard
+#: (2026-09-26, 34 carries): grips more than 45 mm from the tool point were
+#: delivered 0/7 — every one slid out between the pads on the lift or the
+#: swing — while `_held` accepts anything within 55 mm.
+DEEP_GRIP_M = float(os.environ.get("MICRODUCK_MOSS_DEEP_GRIP", "0") or 0.0)
+#: START WHERE THE YARD HANDS OVER. `data/moss_pick_handovers_yard.npy`: 310
+#: real handovers — the object nearest the jaws the tick tidy_moss enters
+#: `creep` (moss-yard seeds 10-41; objects already in the bin removed).
+#: Columns: base-frame x, y, z, |cos tilt|, robot speed, shape (can, block,
+#: squat, ball), seed. MEASURED: 81% are NEARER than the rung-2 box (median
+#: x 0.269 against 0.36-0.47) and only 4-7% fall inside any rung's box, and
+#: 42% are lying (knocked over on the way in). The six-shape pick ad9876,
+#: trained in the box, put 0-5 objects in the yard's bin against 13 for a
+#: can-only pick. The bank gives the position and how upright it stands;
+#: shape and size still come from `sample_prop`.
+HANDOVER_BANK = os.environ.get("MICRODUCK_MOSS_HANDOVER_BANK", "0") not in ("", "0")
+HANDOVER_FILE = Path(__file__).parent / "data" / "moss_pick_handovers_yard.npy"
+HANDOVER_XY_SD = 0.01
 #: ...AND STILL HELD THIS LONG AFTERWARDS. Terminating the instant the can
 #: crosses `SUCCESS_LIFT_M` pays for LIFTING, not for a grip, and the two
 #: come apart: measured 2026-09-24 over 48 seeds, the shipped leg and a
@@ -1040,6 +1059,8 @@ class MossPickEnv(gym.Env):
         can_topple: float = W_CAN_TOPPLE,
         publish_size: bool = PUBLISH_SIZE,
         prop: GraspProp | str = DEFAULT_PROP,
+        handover_bank: bool = HANDOVER_BANK,
+        deep_grip_m: float = DEEP_GRIP_M,
     ):
         if task not in TASKS:
             raise SystemExit(f"unknown --task {task!r} for moss "
@@ -1056,6 +1077,8 @@ class MossPickEnv(gym.Env):
                 f"({', '.join(str(r) for r in RUNGS)}) — a spawn box nobody "
                 "measured is not a curriculum")
         self.rung = int(pick_rung)
+        self.deep_grip_m = float(deep_grip_m)
+        self._handovers = np.load(HANDOVER_FILE) if handover_bank else None
         #: Whether the can's AXIS reaches slots 28-30. Off unless asked for:
         #: see `ATTITUDE_DEFAULT` for the 10/12 -> 0/12 that decided it.
         self.publish_attitude = bool(publish_attitude)
@@ -1468,6 +1491,15 @@ class MossPickEnv(gym.Env):
                      + self.prop.radius * math.sin(roll))
                 topple = float(self.rng.uniform(*CAN_TOPPLE_RATE))
         # roll about x by `roll`, then yaw about z — quaternion product.
+        if self._handovers is not None:
+            row = self._handovers[int(self.rng.integers(len(self._handovers)))]
+            x = float(row[0] + self.rng.normal(0.0, HANDOVER_XY_SD))
+            y = float(row[1] + self.rng.normal(0.0, HANDOVER_XY_SD))
+            roll = math.acos(float(np.clip(row[3], 0.0, 1.0)))
+            leaning, topple = False, 0.0
+            z = (self.prop.radius if self.prop.shape == "sphere" else
+                 self.prop.half_height * math.cos(roll)
+                 + self.prop.radius * math.sin(roll))
         cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
         cr, sr = math.cos(roll / 2), math.sin(roll / 2)
         quat = [cy * cr, cy * sr, sy * sr, sy * cr]
@@ -1761,6 +1793,10 @@ class MossPickEnv(gym.Env):
         # delivered ranks them? See `PICK_HOLD_STEPS` and `_lift_handover`,
         # which stay as the record of that rather than as live code.
         picked = held and lift > SUCCESS_LIFT_M
+        if picked and self.deep_grip_m > 0.0:
+            _d = float(np.linalg.norm(self.data.xpos[self.can_body]
+                                      - self.data.site_xpos[self.tcp_site]))
+            picked = _d <= self.deep_grip_m
         if picked:
             rew += SUCCESS_BONUS
         # SHOVED IT INSTEAD OF REACHING FOR IT: over before the grip, so the

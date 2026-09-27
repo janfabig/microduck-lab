@@ -277,13 +277,15 @@ class TidyMossParams:
     #: and dropping the can beside the bin beats carrying it forever.
     stow_settle_s: float = 3.0
     #: Let go from `moss_env.STOW_RELEASE_HIGH` (over the bin centre, 11 cm
-    #: above the rim) instead of descending to `STOW_INSIDE`. OFF: MEASURED in
-    #: moss-yard (6 seeds x 300 s, paired) it is a null — 14/36 objects in the
-    #: bin against 13/36, per seed +0 +1 +1 +1 -2 +0 — because in the world
-    #: ~93% of releases ALREADY land in the bin; the losses are upstream (the
-    #: pick misses the block and ball, fingertip grips drop on the carry). The
-    #: learned fold was also trained on tuck poses that follow `STOW_INSIDE`.
-    release_high: bool = False
+    #: above the rim) instead of descending to `STOW_INSIDE`. ON, on the
+    #: MECHANISM: at the end of each release in moss-yard (6 seeds), the
+    #: descent left the can wedged in the open jaws 3 times in 12 — then the
+    #: fold carried it off — and the high release 0 in 13. The end-of-run
+    #: count moved 11 -> 13 (paired +1 0 -1 +1 +2 -1: inside the noise on its
+    #: own); the fold still gets home (60/72 against 66/78) and over-speeds
+    #: less (2 against 6). A first A/B that only counted objects at the end
+    #: (14 v 13) could not see the wedge and was read as a null.
+    release_high: bool = True
     #: How long a grip may READ as lost before the loop believes it. The
     #: pads break and remake contact constantly while the arm accelerates:
     #: traced in the room, `holding` flickered holds/released/holds/released
@@ -359,6 +361,17 @@ class TidyMossParams:
     #: against +0.015 in the env at matched can distance) and the jaw
     #: oscillated 29 -> 34 -> 29 mm without ever committing.
     learned_window_s: float = 8.0
+    #: HAND THE PICK A CLEAN START (2026-09-26). Diffing the pick's first
+    #: observation in moss-yard against its env's showed the last-action slots
+    #: carrying the previous leg's action (up to 680 sd off the env's zeros)
+    #: and a stale pick command carried between attempts. Entering `creep`
+    #: now zeroes the last action and re-seeds the command from `GRASP_POSE`,
+    #: as the pick env's reset does — the same fix the stow and fold legs got.
+    pick_clean_start: bool = True
+    #: Run the pick at its trained 25 Hz, holding the command between control
+    #: ticks (per world tick it integrates at twice its trained rate). An
+    #: earlier measurement (8 -> 4 of 18 cans) could not separate the two.
+    pick_at_control_hz: bool = False
 
 
 def _shipped_policy() -> str | None:
@@ -964,6 +977,11 @@ class TidyMoss:
                    for j in RETRACT_JOINTS)
 
     def _to(self, state: str, t: float) -> None:
+        if (state == "creep" and self.state != "creep"
+                and self.p.pick_clean_start):
+            self._act = np.zeros(moss.NUM_ACTIONS, np.float32)
+            self._policy_cmd = None
+            self._last_policy_t = -1e9
         self.state, self._t0 = state, t
         self._fold_seeded = False
         # A new state ramps from where the arm IS now, not from the last
@@ -1090,7 +1108,13 @@ class TidyMoss:
                     else dict(self._policy_cmd or {}))
                 self._to("lift", t)
             else:
-                twist, arm = self._policy_step(senses, self._fix)
+                if (p.pick_at_control_hz and t - self._last_policy_t
+                        < 1.0 / moss.CONTROL_HZ - 1e-6
+                        and self._policy_cmd is not None):
+                    twist, arm = self._held_twist, dict(self._policy_cmd)
+                else:
+                    self._last_policy_t = t
+                    twist, arm = self._policy_step(senses, self._fix)
                 note = f"creep: learned pickup, can {self._fix[0]:.2f} m"
                 # THE LAST 30 CM BELONG TO THE ARM. The policy keeps its arm
                 # channels either way — only the tracks are silenced, and
