@@ -89,6 +89,8 @@ class MossTargetSensors:
         self._pending_fatt = []
         self._fatt = None
         self._fatt_t = -1e9
+        self._z = None
+        self._z_t = -1e9
 
     def tick(self, data, driver, candidates) -> None:
         """One world tick. `candidates` is [(body_id, _Geom)] of pickable
@@ -97,12 +99,33 @@ class MossTargetSensors:
         if not candidates or self._tcp < 0:
             return
         tcp = np.asarray(data.site_xpos[self._tcp], float)
-        bid, g = min(candidates, key=lambda c: float(
-            np.linalg.norm(np.asarray(data.xpos[c[0]], float) - tcp)))
+        # NOT what is already IN THE BIN: during a carry the binned objects sit
+        # right beside the jaws, and taking the nearest of them reported a
+        # binned object's height as the carried one's (the carry check then
+        # aborted 14 of 25 good carries). A camera tells its load from the bin.
+        x, y, yaw = driver.pose(data)
+        c, s = math.cos(-yaw), math.sin(-yaw)
+        def in_bin(b):
+            p = data.xpos[b]
+            bx = (p[0] - x) * c - (p[1] - y) * s
+            by = (p[0] - x) * s + (p[1] - y) * c
+            return (moss.BIN_INTERIOR_X[0] < bx < moss.BIN_INTERIOR_X[1]
+                    and moss.BIN_INTERIOR_Y[0] < by < moss.BIN_INTERIOR_Y[1]
+                    and moss.BIN_FLOOR_Z < p[2] < moss.BIN_RIM_Z + 0.02)
+        live = [cd for cd in candidates if not in_bin(cd[0])] or candidates
+        bid, g = min(live, key=lambda cd: float(
+            np.linalg.norm(np.asarray(data.xpos[cd[0]], float) - tcp)))
         if bid != self.can_body:
             self._clear()
             self.can_body, self.prop = bid, g
+        before = self._arm_rng_t
         self._sense_arm()
+        if self._arm_rng_t != before:
+            # A depth wrist camera gives the object's 3-D position, so its
+            # HEIGHT: sampled with the same detection, the same range noise.
+            self._z = float(data.xpos[bid][2]) + float(
+                self.rng.normal(0.0, ME.ARM_DET_RANGE_NOISE))
+            self._z_t = float(data.time)
         # The FRONT camera's axis reading, gated and delayed as the env's
         # `_sense` gates and delays it (only the attitude half is needed: the
         # position fix is the world's own detector).
@@ -143,5 +166,8 @@ class MossTargetSensors:
         up = abs(self._true_attitude()[2])
         top = float(self.data.xpos[self.can_body][2]) + (
             self.prop.half_height * up + self.prop.radius * (1.0 - up))
+        z = (self._z if self._z is not None
+             and (t - self._z_t) < ME.ARM_STALE_S else None)
         return {"att": None if att is None else tuple(float(v) for v in att),
-                "range": None if rng is None else float(rng), "top": top}
+                "range": None if rng is None else float(rng), "top": top,
+                "z": z}

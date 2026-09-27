@@ -871,6 +871,12 @@ DEEP_GRIP_M = float(os.environ.get("MICRODUCK_MOSS_DEEP_GRIP", "0") or 0.0)
 HANDOVER_BANK = os.environ.get("MICRODUCK_MOSS_HANDOVER_BANK", "0") not in ("", "0")
 HANDOVER_FILE = Path(__file__).parent / "data" / "moss_pick_handovers_yard.npy"
 HANDOVER_XY_SD = 0.01
+#: THE SPAWN BOX, overriding the rung's: "x_lo,x_hi,y_max" (base frame, m).
+#: For teaching the grasp CLOSE IN, from above: MEASURED 2026-09-26, ad9876
+#: (last trained at 0.36-0.47, arm stretched) makes deep picks 93% at
+#: 0.36-0.42 m, 75% at 0.28-0.34 and 65% at 0.22-0.28 — it learned the lunge;
+#: `GRASP_POSE` itself puts the jaws at ~0.26 m, reaching down.
+PICK_BOX = os.environ.get("MICRODUCK_MOSS_PICK_BOX", "")
 #: ...AND STILL HELD THIS LONG AFTERWARDS. Terminating the instant the can
 #: crosses `SUCCESS_LIFT_M` pays for LIFTING, not for a grip, and the two
 #: come apart: measured 2026-09-24 over 48 seeds, the shipped leg and a
@@ -1061,6 +1067,7 @@ class MossPickEnv(gym.Env):
         prop: GraspProp | str = DEFAULT_PROP,
         handover_bank: bool = HANDOVER_BANK,
         deep_grip_m: float = DEEP_GRIP_M,
+        pick_box: str = PICK_BOX,
     ):
         if task not in TASKS:
             raise SystemExit(f"unknown --task {task!r} for moss "
@@ -1078,6 +1085,8 @@ class MossPickEnv(gym.Env):
                 "measured is not a curriculum")
         self.rung = int(pick_rung)
         self.deep_grip_m = float(deep_grip_m)
+        self.pick_box = (tuple(float(v) for v in pick_box.split(","))
+                         if pick_box else None)
         self._handovers = np.load(HANDOVER_FILE) if handover_bank else None
         #: Whether the can's AXIS reaches slots 28-30. Off unless asked for:
         #: see `ATTITUDE_DEFAULT` for the 10/12 -> 0/12 that decided it.
@@ -1440,6 +1449,8 @@ class MossPickEnv(gym.Env):
             self.driver.step(self.data)
             mujoco.mj_step(self.model, self.data)
         lo, hi, ymax = RUNG_BOX[self.rung]
+        if self.pick_box is not None:
+            lo, hi, ymax = self.pick_box
         if self.wrist_drill:
             # between the pads, where closing is the only thing left to do
             lo, hi, ymax = 0.25, 0.27, 0.012

@@ -2002,6 +2002,7 @@ class MossBody(BodyBase):
             out["low_approach"] = _f("MICRODUCK_MOSS_LOW_APPROACH")
             out["handover_bank"] = _b("MICRODUCK_MOSS_HANDOVER_BANK")
             out["deep_grip_m"] = _f("MICRODUCK_MOSS_DEEP_GRIP")
+            out["pick_box"] = os.environ.get("MICRODUCK_MOSS_PICK_BOX", "")
         if task == "stow":
             # The stow leg's own knobs. Same rule as the pick's: read the
             # ENVIRONMENT here so the lab's in-process preview shows the same

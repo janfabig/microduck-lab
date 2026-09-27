@@ -155,3 +155,20 @@ moss-yard, 12 seeds x 300 s, 6 objects: 5e9df7 37/72 (can 22/36 block 1 squat 12
 ad9876 (base locked, wrist inputs) 38/72 (can 20/36 block 6 squat 7 ball 5); paired +0.08 +-
 0.42 per seed. Both ~3.1 objects per run against ~2.2 before these fixes; only ad9876 delivers
 blocks and balls. The brain still ships 5e9df7 — switching is a decision, not yet made.
+
+## Teaching the pick to grasp CLOSE IN failed three ways — fine-tuning ad9876 degrades it
+
+ad9876 deep picks (<=40 mm) by object distance, base locked, its env: 65% at 0.22-0.28 m,
+75% at 0.28-0.34, 93% at 0.36-0.42 — it learned the stretched lunge, not the top-down grasp.
+Warm-started from it (every recorded setting matched):
+| run | change | 0.22-0.28 | 0.28-0.34 | 0.36-0.42 |
+|---|---|---|---|---|
+| teach-moss_pick-b57bbb | box 0.22-0.34 AND deep grip | 43% | 31% | 62% |
+| pickA (battery) | box 0.22-0.34 only | 31% | 47% | 68% |
+| pickB (battery) | deep grip only | 7% | 31% | 65% |
+Every fine-tune is worse everywhere, whatever it changed; pickB's training reward ROSE
+(-15 -> +75) while its deterministic picks fell. Not exploration noise (ad9876 ended at the
+same capped std 0.607). Suspected, NOT confirmed: ad9876 trained (lab chain from
+teach-moss_pick-combo) under reward knobs that are import-time env constants run.json does
+not record, so a fine-tune optimises a different reward. Next: recover its launch env, or
+diff the per-term reward budget of ad9876 vs a fine-tune on the same episodes.

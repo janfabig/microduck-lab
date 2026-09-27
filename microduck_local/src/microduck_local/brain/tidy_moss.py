@@ -163,6 +163,13 @@ class TidyMossParams:
     #: it is. Set False to hand over on arm arrival alone, which is what this
     #: did before 2026-09-24 and what put 72% of handovers out of band.
     band_handover: bool = True
+    #: WITH THE BASE LOCKED, hand over nearer: close in until the object is
+    #: at most this far (base frame), not merely inside the box's far edge
+    #: (0.47). The arm reaches 0.457 m at floor height (measured, joint-space
+    #: sweep), so a pick that cannot drive (ad9876 trained base-locked) was
+    #: handed objects at the edge of its reach and nudged them along instead
+    #: of grasping. 0.41 is the middle of the box it trained on (0.36-0.47).
+    band_far_locked_m: float = 0.41
     #: How long to spend nudging into the band before handing over anyway. A
     #: cap, not a target: a can the base cannot line up is still worth an
     #: out-of-band attempt, because the alternative is no attempt at all.
@@ -275,6 +282,30 @@ class TidyMossParams:
     #: really held — and the check only ran in `stow`, so the brain noticed
     #: 2.8 s late. `lift_drop_grace_s` lets the jaw settle first.
     lift_abort_on_drop: bool = True
+    #: LIFT ONLY ON A CONTACT THAT IS HAPPENING NOW. The creep->lift gate
+    #: reads the DEBOUNCED grip (held within `grip_debounce_s`), so a contact
+    #: that had just ended still read as held and the lift began with the
+    #: pads touching nothing: MEASURED in moss-yard, 8 of 10 empty-handed
+    #: carries had the pads on the object 0% of ticks from the first.
+    lift_needs_live_contact: bool = True
+    #: THE WRIST CAMERA SAYS WHETHER IT IS IN THE HAND, not just the pads.
+    #: Both pads can touch an object still on the floor (pinched at an edge,
+    #: pushed), and `Senses.holding` then says "held": MEASURED in moss-yard,
+    #: a tall can carried 7.2 s with the pads on it 89% of ticks and in the
+    #: hand 40%. The depth wrist camera gives the object's HEIGHT
+    #: (`Senses.target_obs["z"]`). Calibrated on 6 yard seeds: in LIFT from
+    #: 0.6 s a held object has risen (p5 -1.2 cm) and one left behind has not
+    #: (median -14 cm); in STOW a held object never reads below 0.238 m.
+    #: OFF: MEASURED three ways (6 yard seeds each) it cut short MORE real
+    #: carries than it saved (21/30, 14/23 against 8/20 without) and put
+    #: fewer objects in the bin (12/48 against 16/48) — first because the
+    #: wrist target was a binned object, then with that fixed still.
+    #: Kept, with `target_obs["z"]`, for a better-calibrated attempt.
+    camera_hold_check: bool = False
+    lift_rise_after_s: float = 0.6
+    lift_rise_until_s: float = 0.9
+    lift_min_rise_m: float = -0.02
+    stow_min_z_m: float = 0.15
     lift_drop_grace_s: float = 0.3
     #: AFTER A DROP, straight home at this joint rate (rad/s), not the
     #: learned fold: the arm is not over the bin, so there is no bin to route
@@ -524,6 +555,8 @@ class TidyMoss:
         self._dropped = False
         self._drop_from: dict[str, float] | None = None
         self._carry_jaw: float | None = None
+        self._lift_z0: float | None = None
+        self._low_since: float | None = None
         self._grip_from_t = 1e9
         self._grip_ticks = 0
         self.state = "search"
@@ -826,6 +859,8 @@ class TidyMoss:
         if fix is None:
             return 0.0
         lo, hi, ymax = moss.PICK_HANDOVER_BOX
+        if self._flags.get("pick", {}).get("base_lock"):
+            hi = min(hi, self.p.band_far_locked_m)
         x, y = float(fix[0]), float(fix[1])
         if abs(y) > ymax:
             # Turning is the caller's yaw term; keep a little forward creep
@@ -1013,6 +1048,9 @@ class TidyMoss:
             self._last_policy_t = -1e9
         if state not in ("lift", "stow", "release"):
             self._carry_jaw = None
+        if state == "lift":
+            self._lift_z0 = None
+        self._low_since = None
         self.state, self._t0 = state, t
         self._fold_seeded = False
         # A new state ramps from where the arm IS now, not from the last
@@ -1132,7 +1170,9 @@ class TidyMoss:
                     self._give_up(t)
                 self._to("tuck", t)
             elif (self._gripped(senses) and self._grip_held_for(senses)
-                  and self._grip_is_a_grasp(senses)):
+                  and self._grip_is_a_grasp(senses)
+                  and (not p.lift_needs_live_contact
+                       or self._gripped_raw(senses))):
                 self._carry_from = (
                     {j: float(senses.arm.get(j, 0.0)) for j in moss.ARM_JOINTS}
                     if (p.ramp_from_achieved and senses.arm is not None)
@@ -1185,6 +1225,14 @@ class TidyMoss:
         elif self.state == "lift":
             arm = self._ramp(moss.LIFT_POSE, since, p.lift_s)
             note = "lift"
+            z = (senses.target_obs or {}).get("z") if p.camera_hold_check else None
+            if z is not None and self._lift_z0 is None:
+                self._lift_z0 = float(z)
+            if (z is not None and self._lift_z0 is not None
+                    and p.lift_rise_after_s <= since <= p.lift_rise_until_s
+                    and float(z) - self._lift_z0 < p.lift_min_rise_m):
+                return self._abort_drop(t, "lift (camera: not rising)",
+                                        direct=True)
             if p.lift_abort_on_drop and since > p.lift_drop_grace_s:
                 if not self._gripped(senses):
                     self._empty_since = self._empty_since or t
@@ -1287,6 +1335,18 @@ class TidyMoss:
                 self._carry_from = dict(zip(moss.ARM_JOINTS, pose))
                 self._leg_from = None
             note = "stow: up, round, down (scripted)"
+            # THE CAMERA'S OPINION: an object the wrist camera sees down near
+            # the floor for `stow_drop_grace_s` is not in the hand, whatever
+            # the pads report.
+            zc = (senses.target_obs or {}).get("z") if p.camera_hold_check else None
+            if zc is not None and float(zc) < p.stow_min_z_m and since > p.stow_drop_grace_s:
+                self._low_since = self._low_since if self._low_since is not None else t
+                if t - self._low_since >= 0.3:
+                    self._low_since = None
+                    return self._abort_drop(t, "stow (camera: on the floor)",
+                                            direct=self._leg_i in (-1, 0))
+            else:
+                self._low_since = None
             # IS THERE STILL A CAN? Asked every tick of the carry, because
             # the alternative is finishing the delivery with empty jaws and
             # then driving off as though it had worked.

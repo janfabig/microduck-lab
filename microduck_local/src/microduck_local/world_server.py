@@ -349,7 +349,7 @@ def list_scenarios() -> list[dict]:
     for name, sc in builtin_scenarios().items():
         out.append({"name": name, "builtin": True, "ducks": len(sc.ducks),
                     "robots": _robot_counts(sc),
-                    "objects": len(sc.walls) + len(sc.boxes) + len(sc.balls),
+                    "objects": len(sc.walls) + len(sc.boxes) + len(sc.balls) + len(sc.props),
                     "modified": None})
     d = scenarios_dir()
     if d.exists():
@@ -361,7 +361,7 @@ def list_scenarios() -> list[dict]:
             out.append({"name": p.stem, "builtin": p.stem in BUILTIN_NAMES,
                         "ducks": len(sc.ducks),
                         "robots": _robot_counts(sc),
-                        "objects": len(sc.walls) + len(sc.boxes) + len(sc.balls),
+                        "objects": len(sc.walls) + len(sc.boxes) + len(sc.balls) + len(sc.props),
                         "modified": p.stat().st_mtime})
     return out
 
