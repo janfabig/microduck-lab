@@ -198,3 +198,21 @@ from vertical (7/7), a block at 5 (12/12); at 0.38-0.42 m everything is 20-27 de
 than 8 cm over at 0.28 m, bigger ones at 0.41 m (a close handover lost cans on the lift).
 moss-yard 8 seeds: 37/64 against 32/64 (paired +0.62 +- 0.56; cans 9 -> 14). The card stays
 0/8: the head camera sees a 4 mm card 15 times in 300 s — it is rarely targeted at all.
+
+## The litter set, and why the cigarette butt fails (2026-09-27)
+
+Litter (`litter=True`): paper (sphere), butt (lying 32x8x8 mm box), cap. 478dad close in picks
+butts 11-16 of 30-40. Three things that DON'T move it (30-40 episodes each, 478dad close in):
+* softer contact (`physics_contact`, soft 1.0): 11 -> 3/30. MuJoCo's soft contact pushes back
+  less, so grips less — the opposite of a real filter. Plumbing kept, off.
+* grippier friction (1.2): 12/30. Kept (free).
+* a gentler close — cap the jaw command at 4/8/12 mm past the achieved jaw (a current limit):
+  10, 8, 13/30 v 12 unclamped. Force is not what loses it.
+* the "correct" axis: `_true_attitude` reports body z, which for the lying butt is a SHORT
+  axis. Reporting the long one: 16/40 -> 0/40 (cards 36 -> 31/40). Why: all 16 picks gripped
+  END TO END (jaw opening along the long axis, sin^2 < .3 in 16/16); all 7 grips across the
+  8 mm width failed. The short-axis reading steers to the grip that works. Kept as is,
+  documented on `_true_attitude`.
+The failures that remain: 8/24 never got both pads on it, 7/24 closed across the width,
+7/24 were end-to-end and still slipped. Next lever: jaw alignment (the existing `jaw_align`
+term pays turning towards the end-to-end grip under this axis) in a litter fine-tune.

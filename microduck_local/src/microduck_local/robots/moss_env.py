@@ -2203,6 +2203,14 @@ class MossPickEnv(gym.Env):
         axis projects onto the detector's bounding box as the box's long
         axis, and its uprightness as the box's aspect. See
         `docs/moss-policy-schema.md` for how the robot fills these.
+
+        BODY Z, for every shape — and for the lying cigarette butt that is a
+        SHORT axis, 90 degrees off its long one. Do not "fix" it to the long
+        axis: MEASURED 2026-09-27 on 478dad, 40 butts, every one of the 16
+        picks had the jaw opening ALONG the long axis (an end-to-end grip,
+        which this axis steers towards), all 7 grips across the 8 mm width
+        failed, and reporting the long axis took picks 16/40 -> 0/40 (cards
+        36 -> 31). The exact top height it would also fix measured neutral.
         """
         R = np.zeros(9)
         mujoco.mju_quat2Mat(R, np.asarray(self.data.xquat[self.can_body], float))
