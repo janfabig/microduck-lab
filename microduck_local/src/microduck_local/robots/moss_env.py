@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -420,20 +421,24 @@ STALE_S = 0.6
 # The second camera, and it answers a DIFFERENT question. The front D455
 # gives range and bearing from the chassis — where the can is — and it is
 # the only one that sees anything at standoff. The wrist camera looks down
-# the approach from ~17 cm and gives ATTITUDE: which way a lying cylinder
+# the approach from 12 cm behind the tool point and gives ATTITUDE: which way a lying cylinder
 # points, which the front camera can only infer from a silhouette at 40 cm
 # and which the observation did not carry at all until 2026-09-25.
 #
-# MEASURED over 3,200 ticks of real picks, coverage of the can:
+# MEASURED on the side mount (2026-09-27), 3,127 frames of 478dad picks,
+# the object inside each camera's modelled field and range (no occlusion,
+# as the sensors here model it):
 #
 #     grasp gap      front      wrist
-#     0.00-0.05 m     91%        40%
-#     0.05-0.10 m     19%        62%
-#     0.10-0.20 m     15%        45%
+#     0.00-0.05 m     62%        96%
+#     0.05-0.10 m     90%        93%
+#     0.10-0.20 m     95%        84%
+#     0.20-0.30 m     88%        45%
 #
-# Complementary rather than redundant: the front holds it at standoff and in
-# the last centimetres, the wrist owns the band where the jaw has to commit
-# to an orientation.
+# The wrist owns the last centimetres, where the jaw has to commit to an
+# orientation; the front holds it from standoff in. (The table this replaced,
+# front 91/19/15% and wrist 40/62/45%, was the retired mount past the jaw
+# tips, on 5e9df7's picks.)
 ARM_DET_RATE_HZ = moss.ARM_CAMERA_RATE_HZ
 #: A short USB pipeline rather than the RealSense's, so less latency.
 ARM_DET_LATENCY_S = 0.03
@@ -643,12 +648,14 @@ BASE_LOCK = os.environ.get("MICRODUCK_MOSS_BASE_LOCK", "0") not in ("", "0")
 #: Published in place of slot 26, the can's HEIGHT off the front camera, which
 #: MEASURED carries sd 0.0054 m across every pose — a constant — and is now
 #: redundant with slot 30 (uprightness) and slot 31 (the object's top). The
-#: wrist range carries sd 0.0605 m over 0.006-0.375 m, 11x the information in
-#: the slot it replaces.
+#: wrist range carries sd 0.033 m over 0.09-0.27 m (1st-99th percentile, side
+#: mount, 478dad under its trained settings, 2026-09-27), 6x the information
+#: in the slot it replaces. It is the range to the lens, 12 cm behind the tool
+#: point, so it never reads zero at contact; the retired mount read 0.04-0.18.
 #:
 #: Deployable: this is a monocular range off the SAME bounding box the front
-#: camera's `range_est` already inverts from apparent width, on a camera 17 cm
-#: from its subject rather than 40.
+#: camera's `range_est` already inverts from apparent width, on a camera
+#: 9-27 cm from its subject rather than 40.
 PUBLISH_PROXIMITY = os.environ.get("MICRODUCK_MOSS_PROXIMITY", "0") not in ("", "0")
 #: **LITTER IS NOT ALL ONE CAN.** Every pick policy here trained on a single
 #: 66x115 mm cylinder, so "it generalises to trash" is a claim nothing has
@@ -1033,6 +1040,54 @@ def obs_env_kwargs(policy_or_run, flags=OBS_FLAGS) -> dict:
     return {k: False for k in flags}
 
 
+def _run_env_kwargs(policy_or_run) -> dict | None:
+    """A run's recorded `env_kwargs`, found as `obs_env_kwargs` finds them;
+    None when there is no readable run.json."""
+    p = Path(policy_or_run)
+    for cand in (p, p.parent, p.parent.parent):
+        meta = cand / "run.json"
+        if meta.is_file():
+            try:
+                return json.loads(meta.read_text()).get("env_kwargs") or {}
+            except (OSError, ValueError):
+                return None
+    return None
+
+
+def arm_camera_mount_of(policy_or_run) -> int | None:
+    """The wrist-camera mount a run TRAINED behind (`moss.ARM_CAMERA_MOUNT`).
+
+    A run.json without the key predates it and trained on the retired mount
+    past the jaw tips (`ARM_CAMERA_MOUNT_LEGACY`); no run.json at all is
+    unknown (None).
+    """
+    kw = _run_env_kwargs(policy_or_run)
+    if kw is None:
+        return None
+    return int(kw.get("arm_camera_mount", moss.ARM_CAMERA_MOUNT_LEGACY))
+
+
+def wrist_mount_mismatch(policy_or_run, who: str) -> str | None:
+    """Why a leg's wrist inputs are not what it learned, or None: it trained
+    behind another mount AND the wrist reached its observation (attitude,
+    proximity, or a stow's arm-camera drop point). A leg that never saw the
+    wrist camera is not changed by moving it."""
+    kw = _run_env_kwargs(policy_or_run)
+    mount = arm_camera_mount_of(policy_or_run)
+    if kw is None or mount == moss.ARM_CAMERA_MOUNT:
+        return None
+    if not any(kw.get(k) for k in ("publish_attitude", "publish_proximity",
+                                   "drop_target")):
+        return None
+    return mount_mismatch_message(mount, who)
+
+
+def mount_mismatch_message(trained: int, who: str = "this policy") -> str:
+    return (f"{who} trained behind wrist-camera mount {trained}; the model "
+            f"carries mount {moss.ARM_CAMERA_MOUNT} (moss.ARM_CAMERA_MOUNT), so "
+            "its wrist slots 26 and 28-30 are not the readings it learned")
+
+
 def eval_env_kwargs(policy_or_run) -> dict:
     """Every flag an EVALUATION must match the run's training on.
 
@@ -1040,7 +1095,11 @@ def eval_env_kwargs(policy_or_run) -> dict:
     ALLOWED TO DO. Both have to match or the measurement is of a different
     robot than the one that was trained.
     """
-    return obs_env_kwargs(policy_or_run, EVAL_FLAGS)
+    out = obs_env_kwargs(policy_or_run, EVAL_FLAGS)
+    mount = arm_camera_mount_of(policy_or_run)
+    if mount is not None:
+        out["arm_camera_mount"] = mount
+    return out
 
 
 def scene_spec(rung: int, prop: GraspProp | str = DEFAULT_PROP,
@@ -1131,7 +1190,21 @@ class MossPickEnv(gym.Env):
         gap_from_tcp: bool | None = None,
         litter: bool | None = None,
         sphere_centre_m: float | None = None,
+        arm_camera_mount: int | None = None,
     ):
+        #: The wrist mount the policy behind this env TRAINED on, when the
+        #: caller knows it (`arm_camera_mount_of`). The model always carries
+        #: the current one; a mismatch is allowed — it is how an old leg is
+        #: measured on the honest sensor — but never silent when the wrist
+        #: reaches the observation (attitude, proximity, or a stow's drop
+        #: point, which `MossStowEnv` sets before calling up here).
+        self.arm_camera_mount = (moss.ARM_CAMERA_MOUNT if arm_camera_mount is None
+                                 else int(arm_camera_mount))
+        if (self.arm_camera_mount != moss.ARM_CAMERA_MOUNT
+                and (publish_attitude or publish_proximity
+                     or getattr(self, "drop_target", False))):
+            warnings.warn(mount_mismatch_message(self.arm_camera_mount),
+                          stacklevel=2)
         if task not in TASKS:
             raise SystemExit(f"unknown --task {task!r} for moss "
                              f"(have: {', '.join(TASKS)})")

@@ -9,10 +9,15 @@ a retrain of every leg.
 
 What is modelled and what is not:
 
-  * The look is taken from `BIN_LOOK_POSE`. NOT the post-delivery pose: from
-    there the bin is BEHIND the wrist camera — MEASURED, 0 of 71 clutter
-    items detected — so the brain tilts the wrist down into this pose after
-    a delivery, looks, and then folds.
+  * The look is taken from `BIN_LOOK_POSE`, not from where a delivery leaves
+    the arm. No pose near that one sees the bin floor with every joint
+    0.10 rad clear of its stop (the side mount looks ALONG the jaws), so a
+    brain that uses it moves the whole arm after a delivery — shoulder and
+    elbow by 0.2-0.5 rad and the wrist ROLL by 2.8 rad — looks, then folds.
+    MEASURED: the straight joint move from the post-delivery pose (-1.577,
+    -1.033, 0.017, 1.56, -0.43) touches nothing at 101 kinematic steps; a
+    real servo path is not checked. No brain here takes the look yet —
+    only `MossStowEnv(drop_target=True)`, kinematically.
   * Each item is detected only inside the arm camera's real field of view and
     range, only if the line of sight clears the bin's walls, with position
     noise and dropout.
@@ -41,7 +46,8 @@ from . import moss
 #: the post-delivery pose, 0.10 rad clear of every joint limit, arm touching
 #: nothing, lines of sight clearing the rim. None sees the WHOLE floor (that
 #: needs wrist_flex on its stop); this one sees 94% of a 6 x 6 floor grid and
-#: keeps >= 90% with no contact under 0.05 rad perturbation on every joint.
+#: keeps >= 90% of it with no contact in 189 of 200 poses perturbed by up to
+#: 0.05 rad on every joint (worst 86%).
 BIN_LOOK_POSE = (-1.776, -1.195, 0.559, 1.507, 2.338)
 #: sd of a detected item's position, m. Of the order of the arm camera's own
 #: range noise at 0.3 m.

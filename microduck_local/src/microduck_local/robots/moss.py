@@ -773,7 +773,8 @@ CAMERA_RATE_HZ = 10.0
 # What it is for is not more coverage. It is ATTITUDE: the front RealSense
 # sits 0.156 m up on the chassis and reads a can at 40 cm as a silhouette,
 # from which the axis of a lying cylinder is an inference off a bounding box.
-# A camera on the gripper frame looks down the approach at 20 cm and sees it.
+# A camera on the gripper housing looks down the approach from 12 cm behind
+# the tool point and sees it.
 # MEASURED on the shipped leg with no attitude in the observation at all:
 # the correlation between the can's axis and `wrist_roll` is -0.030 and the
 # wrist travels 3.2 degrees — the jaw never turns to meet a perpendicular
@@ -823,6 +824,15 @@ ARM_CAMERA_POS: tuple[float, float, float] = (0.021, -0.080, -0.100)
 #: image's up is AWAY from the approach axis, so the jaws sit at the bottom
 #: edge of the picture, as on any side-mounted wrist camera.
 ARM_CAMERA_AIM: tuple[float, float, float] = (-0.008, 0.0, 0.150)
+#: WHICH wrist mount this model carries, recorded in every MOSS run's
+#: `env_kwargs` (`Body.train_env_kwargs`) so a policy is checked against the
+#: sensor it trained behind (`moss_env.arm_camera_mount_of`). 1 is the
+#: retired mount past the jaw tips: every run before 2026-09-27, whose
+#: run.json has no such key. 2 is this side mount. BUMP IT whenever
+#: `ARM_CAMERA_POS` or `ARM_CAMERA_AIM` moves: a leg's wrist slots (26,
+#: 28-30) are only the readings it learned on the mount it learned them on.
+ARM_CAMERA_MOUNT = 2
+ARM_CAMERA_MOUNT_LEGACY = 1
 #: **The SO-101's own default wrist camera**, which is what this arm is
 #: derived from. `TheRobotStudio/SO-ARM100` ships six wrist mounts — a
 #: 32x32 UVC module (hex-nut, integrated and plug-on variants), a RealSense
@@ -1373,6 +1383,12 @@ def arm_camera_quat() -> np.ndarray:
     x /= np.linalg.norm(x)
     out = np.array([p[0] - aim[0], p[1] - aim[1], 0.0])
     z = out - x * (out @ x)
+    if np.linalg.norm(z) < 1e-6:
+        # On the approach axis there is no "away from it" to call up, and
+        # normalising a zero vector would compile a NaN frame that silently
+        # detects nothing.
+        raise ValueError("ARM_CAMERA_POS lies on the approach axis through "
+                         "ARM_CAMERA_AIM; the image's up is undefined")
     z /= np.linalg.norm(z)
     q = np.zeros(4)
     mujoco.mju_mat2Quat(q, np.column_stack([x, np.cross(z, x), z]).ravel())
@@ -1993,6 +2009,11 @@ class MossBody(BodyBase):
         }
         task = getattr(args, "task", None) or self.default_task
         out: dict = {}
+        # WHICH WRIST CAMERA this run trains behind — every task, because the
+        # model carries it whatever the task. Without it a policy trained on
+        # the retired mount is scored on the new one with nothing to say so
+        # (478dad: -4.4 points, 2026-09-27). See `ARM_CAMERA_MOUNT`.
+        out["arm_camera_mount"] = ARM_CAMERA_MOUNT
         # WHICH OBSERVATION THIS RUN TRAINS ON, as a recorded kwarg rather than
         # a process environment variable. A policy trained with the can's axis
         # in slots 28-30 and one trained without are NOT interchangeable: the
@@ -2171,7 +2192,7 @@ class MossBody(BodyBase):
                 seed=seed())
             # THE WRIST CAMERA, as its own detector. Not more coverage — the
             # front RealSense already sees the room — but ATTITUDE: it looks
-            # down the approach from 20 cm, where a lying can is a shape
+            # down the approach from 12 cm behind the jaws, where a lying can is a shape
             # rather than the silhouette the chassis camera reads at 40.
             # Same class of sensor, different question, so it is a second
             # `Detector` rather than a wider spec on the first.
@@ -2233,7 +2254,9 @@ __all__ = ["ARM_HOME", "ARM_JOINTS", "ASSETS", "BASE_BODY", "BASE_JOINTS",
            "MOSS_LICENCE", "NUM_ACTIONS", "OBS_DIM", "MossBody",
            "CAMERA_BODY", "CAMERA_POS", "GRIPPER_JOINT", "add_camera", "add_planar_base",
            "apply_v04_visuals", "couple_fingers", "PICK_HANDOVER_BOX",
-           "ARM_CAMERA_BODY", "add_arm_camera",
+           "ARM_CAMERA_BODY", "ARM_CAMERA_POS", "ARM_CAMERA_AIM",
+           "ARM_CAMERA_MOUNT", "ARM_CAMERA_MOUNT_LEGACY", "arm_camera_quat",
+           "add_arm_camera",
            "OBS_TARGET_AXIS", "OBS_TARGET_UPRIGHT", "OBS_SPARE", "OBS_DROP",
            "tracks_as_support", "TRACK_SUPPORT_FRICTION", "TUCK_POSE_V04",
            "tuck_pose", "collision_v04",

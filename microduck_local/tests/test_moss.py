@@ -409,33 +409,138 @@ def test_the_camera_is_a_massless_frame_up_front():
         "the camera frame changed the robot's mass — it must be a frame")
 
 
+def _geom_points(m, d, gi):
+    """A geom's vertices (mesh) or corners (box), in world coordinates."""
+    import itertools
+    R, p = d.geom_xmat[gi].reshape(3, 3), d.geom_xpos[gi]
+    if m.geom_type[gi] == mujoco.mjtGeom.mjGEOM_MESH:
+        mid = m.geom_dataid[gi]
+        a, n = m.mesh_vertadr[mid], m.mesh_vertnum[mid]
+        return m.mesh_vert[a:a + n] @ R.T + p
+    return np.array([p + R @ (np.array(c) * m.geom_size[gi])
+                     for c in itertools.product((-1, 1), repeat=3)])
+
+
 def test_the_wrist_camera_sits_where_a_bracket_can_hold_it():
     """The gripper frame's +z is the APPROACH (the tool point is at z -0.014,
     the housing at z -0.098..-0.042). The first mount read it as "up" and put
     the lens 6.5 cm past the jaw tips — under the floor at GRASP_POSE, looking
-    up at the tool point. Pinned in the frame's own terms, at every pose the
-    arm is sent to: the lens is BEHIND the tool point along the approach,
-    outside the housing, off the floor, and the tool point is in its field."""
+    up at the tool point.
+
+    Lens, tool point and housing are rigid in the gripper frame, so those are
+    checked ONCE, in its terms: behind the jaws, 1 cm clear of every geom the
+    frame and the fingers carry (jaws shut AND open), tool point in the field.
+    What does change with the pose is checked where it changes: off the floor
+    at every pose the arm is sent to, and clear of the forearm and wrist over
+    the whole wrist_flex x wrist_roll range — a mount behind the housing
+    corner saw as much and came within 5 mm of the forearm at the stop."""
+    from microduck_local.robots import moss_bin
+
     m = moss.model()
     d = mujoco.MjData(m)
     g, cam = m.body(moss.GRIPPER_FRAME_BODY).id, m.body(moss.ARM_CAMERA_BODY).id
     tcp = m.site("tcp").id
-    for pose in (moss.GRASP_POSE, moss.LIFT_POSE, moss.DROP_POSE, moss.TUCK_POSE_V04):
+
+    def pose(q, fingers=0.0):
         mujoco.mj_resetData(m, d)
-        for j, q in zip(moss.ARM_JOINTS, pose):
-            d.qpos[m.joint(j).qposadr[0]] = q
+        for j, v in zip(moss.ARM_JOINTS, q):
+            d.qpos[m.joint(j).qposadr[0]] = v
+        for j in moss.FINGER_JOINTS:
+            d.qpos[m.joint(j).qposadr[0]] = fingers
         mujoco.mj_forward(m, d)
-        Rg = d.xmat[g].reshape(3, 3)
-        lens = Rg.T @ (d.xpos[cam] - d.xpos[g])
-        tool = Rg.T @ (d.site_xpos[tcp] - d.xpos[g])
+
+    def in_grip(x):
+        return (x - d.xpos[g]) @ d.xmat[g].reshape(3, 3)
+
+    carried = [m.body(n).id for n in (moss.GRIPPER_FRAME_BODY, *moss.FINGER_JOINTS)]
+    for fingers in (0.0, float(m.joint(moss.FINGER_JOINTS[0]).range[1])):
+        pose(moss.GRASP_POSE, fingers)
+        lens, tool = in_grip(d.xpos[cam]), in_grip(d.site_xpos[tcp])
         assert lens[2] < tool[2] - 0.05, ("lens is not behind the jaws", lens, tool)
-        assert math.hypot(lens[0] - tool[0], lens[1]) > 0.075, "lens inside the housing"
-        assert d.xpos[cam][2] > 0.05, ("lens at the floor", pose, d.xpos[cam])
-        v = d.xmat[cam].reshape(3, 3).T @ (d.site_xpos[tcp] - d.xpos[cam])
-        assert v[0] > 0
-        assert abs(math.degrees(math.atan2(v[1], v[0]))) <= moss.ARM_CAMERA_HFOV_DEG / 2
-        assert abs(math.degrees(math.atan2(v[2], math.hypot(v[0], v[1])))) \
-            <= moss.ARM_CAMERA_VFOV_DEG / 2
+        for gi in range(m.ngeom):
+            if m.geom_bodyid[gi] not in carried:
+                continue
+            pts = in_grip(_geom_points(m, d, gi))
+            gap = np.maximum(pts.min(0) - lens, 0) + np.maximum(lens - pts.max(0), 0)
+            assert np.linalg.norm(gap) >= 0.01, (
+                f"lens within 1 cm of {m.geom(gi).name or gi}", lens)
+        assert moss_bin.in_view(d.xpos[cam], d.xmat[cam], d.site_xpos[tcp])
+
+    for q in (moss.GRASP_POSE, moss.LIFT_POSE, moss.DROP_POSE, moss.TUCK_POSE_V04):
+        pose(q)
+        assert d.xpos[cam][2] > 0.05, ("lens at the floor", q, d.xpos[cam])
+
+    arm = [gi for gi in range(m.ngeom) if m.geom_group[gi] == 2
+           and m.geom_bodyid[gi] in {m.body(n).id for n in
+                                     ("upper_arm_link", "lower_arm_link", "wrist_link")}]
+    flex, roll = m.joint("wrist_flex").range, m.joint("wrist_roll").range
+    worst = 9.0
+    for qf in np.linspace(*flex, 13):
+        for qr in np.linspace(*roll, 13):
+            q = list(moss.GRASP_POSE)
+            q[3], q[4] = qf, qr
+            pose(q)
+            pts = np.concatenate([_geom_points(m, d, gi) for gi in arm])
+            worst = min(worst, float(np.linalg.norm(pts - d.xpos[cam], axis=1).min()))
+    assert worst >= 0.015, f"lens comes within {worst * 100:.1f} cm of the forearm"
+
+
+def test_every_moss_run_records_the_wrist_mount_it_trained_behind(tmp_path):
+    """478dad trained on the retired mount and nothing recorded it, so it was
+    scored on the new one with no warning (-4.4 points, 2026-09-27). Every
+    task's run.json now says which mount, and a run.json without the key is
+    read as the retired one — the truth for every run before the move."""
+    import json as _json
+    from types import SimpleNamespace as NS
+
+    from microduck_local.robots.moss_env import arm_camera_mount_of, eval_env_kwargs
+    from microduck_local.robots.registry import registry
+
+    body = registry()["moss"]
+    for task in ("pick", "approach", "stow"):
+        got = body.train_env_kwargs(NS(task=task)).get("arm_camera_mount")
+        assert got == moss.ARM_CAMERA_MOUNT, (task, got)
+
+    root = tmp_path
+    for name, kw, want in (("legacy", {"publish_attitude": True},
+                            moss.ARM_CAMERA_MOUNT_LEGACY),
+                           ("current", {"arm_camera_mount": moss.ARM_CAMERA_MOUNT},
+                            moss.ARM_CAMERA_MOUNT)):
+        run = root / name
+        run.mkdir()
+        (run / "run.json").write_text(_json.dumps({"env_kwargs": kw}))
+        assert arm_camera_mount_of(run / "policy.onnx") == want
+        assert eval_env_kwargs(run / "policy.onnx")["arm_camera_mount"] == want
+    assert arm_camera_mount_of(root / "nowhere" / "policy.onnx") is None
+    assert "arm_camera_mount" not in eval_env_kwargs(root / "nowhere" / "policy.onnx")
+
+
+def test_a_leg_behind_another_mount_is_measured_but_never_silently():
+    """Scoring an old leg on the honest sensor is legitimate — it is how the
+    cost of the move was measured — but the env says so, every time."""
+    import warnings
+
+    from microduck_local.robots.moss_env import MossPickEnv
+
+    old = moss.ARM_CAMERA_MOUNT_LEGACY
+    with pytest.warns(UserWarning, match="wrist-camera mount"):
+        MossPickEnv(seed=0, arm_camera_mount=old, publish_proximity=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        MossPickEnv(seed=0, arm_camera_mount=moss.ARM_CAMERA_MOUNT,
+                    publish_proximity=True)
+        MossPickEnv(seed=0, publish_attitude=True)
+        # a leg that never saw the wrist camera is not changed by moving it
+        MossPickEnv(seed=0, arm_camera_mount=old, publish_attitude=False,
+                    publish_proximity=False)
+
+
+def test_a_wrist_camera_on_the_approach_axis_is_refused(monkeypatch):
+    """On the axis there is no "away from it" to call the image's up; the
+    unguarded version compiled a NaN frame that silently detected nothing."""
+    monkeypatch.setattr(moss, "ARM_CAMERA_POS", (-0.008, 0.0, -0.12))
+    with pytest.raises(ValueError, match="approach axis"):
+        moss.arm_camera_quat()
 
 
 def test_it_sees_the_cans_in_its_own_yard():

@@ -11,7 +11,8 @@ import sys
 import numpy as np
 import onnxruntime as ort
 
-from microduck_local.robots.moss_env import MossPickEnv, obs_env_kwargs
+from microduck_local.robots.moss_env import (MossPickEnv, arm_camera_mount_of,
+                                             obs_env_kwargs)
 
 
 def main() -> None:
@@ -24,6 +25,7 @@ def main() -> None:
     gaps, steps = [], []
     for seed in range(seeds):
         env = MossPickEnv(seed=seed, pick_rung=rung,
+                          arm_camera_mount=arm_camera_mount_of(path),
                           **obs_env_kwargs(path))
         obs, _ = env.reset()
         info = {}

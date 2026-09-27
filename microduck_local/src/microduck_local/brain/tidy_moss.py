@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import math
 import os
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -527,6 +528,9 @@ class TidyMoss:
         for task, path in paths.items():
             fl = dict(ME.obs_env_kwargs(path))
             fl["base_lock"] = bool(ME.eval_env_kwargs(path).get("base_lock"))
+            msg = ME.wrist_mount_mismatch(path, f"the {task} leg ({path})")
+            if msg:
+                warnings.warn(msg)
             self._flags[task] = fl
         # `_sess`/`_in` stay the PICKUP session: the creep and close states
         # read them directly and every existing test names them.
