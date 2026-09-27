@@ -297,3 +297,17 @@ they hold. Now ON by default, with a test planted against the 50 Hz regression.
 Also in that diff, not yet chased: the axis slots (28-30) disagree yard v env (mean 0.67 over
 40 steps; partly the env replay starting with a cleared tracker), and the brain does not
 clip arm commands to the joint range where the env does.
+
+## The axis-slot diff, chased (2026-09-27)
+
+In the yard (6 seeds, 10761 pick steps at 25 Hz), slots 28-30 against the true axis of the
+object the BRAIN is going for (its `_fix`):
+* For LYING targets with the sensor on them the axis is right: corr 0.90 / 0.88, doubled-
+  angle offset median -0.3 deg (IQR +-6.7). The big mean error in the side-by-side is
+  upright objects, whose axis is noise in the env too — not a bug.
+* The wrist sensor (`moss_wrist`) targets the object NEAREST THE JAWS, which is not the
+  brain's target on 29% of pick steps. Pointing it at the brain's fix (a hint from
+  world_server; 876/879 on target after) measured 89 v 99 in the bin over 24 seeds (paired
+  -0.42 +- 0.44): null, leaning worse — fewer carries reached the lift (125 v 145), those
+  that did kept slightly better. Reverted (patch `sensor_hint.patch` in scratch). The
+  mismatch is real but it is not costing objects.
