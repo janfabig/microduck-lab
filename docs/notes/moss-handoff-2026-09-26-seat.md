@@ -247,3 +247,24 @@ in the lift, 3 in the stow, 3 kept. Most handovers were at 0.40-0.54 m (not clos
   grips shallow. Next instrument: snapshot the yard's full state (arm qpos, object pose and
   size) at `creep` for shallow cases and replay it in the env — if the env grips deep from
   the same state, the difference is the world's physics or the brain, not the start.
+
+## The replay (2026-09-27): the start is not the cause; two instrument errors on the way
+
+* Replay: snapshot the yard at every `creep` entry (arm joints, the brain's TARGET object —
+  from its own `_fix`, pose and size), pose it in the pick env, run 478dad. 12 seeds, 162
+  starts, 72 yard lifts (69 on the target), 23 shallow. From the 23 states that ended in a
+  shallow yard lift the env picks 17; from the 90 that never lifted in the yard, 34. Same
+  policy, same start — the yard runs it worse. `snap_yard4.py` / `replay_env.py` (scratch).
+* TWO WRONG TURNS, both from taking "the object nearest the jaws" as the target: it matches
+  the brain's `_fix` only 42/80 times. It produced "shallow lifts are never-steady grips"
+  (31/34) and "the jaws grab a neighbour" (16/39); on the brain's own target, 38/39 lifts
+  hold it and steadiness does not predict depth (18/59 v 5/13). A `lift_needs_steady_grip`
+  built on the first was measured anyway: 64 v 71, paired -0.29 +- 0.19. Removed.
+* A REAL train/deploy difference: the pick env's object inherits MOSS's MJCF default
+  (solref 0.008 / solimp 0.95 0.99); yard props get MuJoCo's softer default (0.02 / 0.9
+  0.95). Stiffened in the yard, 24 seeds: 84 v 71 in bin (paired +0.54 +- 0.34, not
+  resolved); lift losses 40 v 39, shallow 47 v 48 — it is not the lift cause; stow losses
+  28 v 37. Not landed.
+* Untested suspect for the lift: in the env the POLICY lifts (success = held 8 cm up); in
+  the yard the brain takes over at the grip and runs a scripted joint-space ramp to
+  LIFT_POSE. The replay's env success is the policy's own lift.
