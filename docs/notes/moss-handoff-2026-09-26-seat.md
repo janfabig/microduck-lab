@@ -216,3 +216,8 @@ butts 11-16 of 30-40. Three things that DON'T move it (30-40 episodes each, 478d
 The failures that remain: 8/24 never got both pads on it, 7/24 closed across the width,
 7/24 were end-to-end and still slipped. Next lever: jaw alignment (the existing `jaw_align`
 term pays turning towards the end-to-end grip under this axis) in a litter fine-tune.
+* NOT the jaw-align fine-tune: 478dad and ad9876 already train with `jaw_align` 6 /
+  `align_hold` 0.3, so "478dad + litter + align" IS d49520 (butts 6/19, not shipped).
+* the wrist's STARTING angle: pre-rotated for the end-to-end grip 12/40, for across 13/40,
+  as spawned 16/40 (same seeds). The policy re-aims during the approach; the start is not
+  the lever. End-to-end in 16/16 picks is what survives, not what the policy chooses.
