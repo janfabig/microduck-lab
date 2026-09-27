@@ -1068,6 +1068,7 @@ class MossPickEnv(gym.Env):
         handover_bank: bool = HANDOVER_BANK,
         deep_grip_m: float = DEEP_GRIP_M,
         pick_box: str = PICK_BOX,
+        gap_from_tcp: bool | None = None,
     ):
         if task not in TASKS:
             raise SystemExit(f"unknown --task {task!r} for moss "
@@ -1085,6 +1086,14 @@ class MossPickEnv(gym.Env):
                 "measured is not a curriculum")
         self.rung = int(pick_rung)
         self.deep_grip_m = float(deep_grip_m)
+        #: A CONSTRUCTOR ARGUMENT, not only the import-time constant, so it
+        #: reaches run.json. MEASURED 2026-09-27: ad9876 replays at +86/ep
+        #: with it on (its training reported +88) and -3 with it off; every
+        #: fine-tune launched without it trained on the chassis-distance
+        #: progress term and learned to DRAG objects toward the robot
+        #: (+14..+17 cm, 55-60 of 60 episodes) instead of grasping them.
+        self.gap_from_tcp = bool(GAP_FROM_TCP if gap_from_tcp is None
+                                 else gap_from_tcp)
         self.pick_box = (tuple(float(v) for v in pick_box.split(","))
                          if pick_box else None)
         self._handovers = np.load(HANDOVER_FILE) if handover_bank else None
@@ -1224,7 +1233,7 @@ class MossPickEnv(gym.Env):
         spawn boxes mean "this far ahead of the chassis" and a test asserts
         it. Only what the reward PAYS FOR moves to the gripper.
         """
-        if not GAP_FROM_TCP:
+        if not self.gap_from_tcp:
             return self._gap()
         can = self.data.xpos[self.can_body]
         tcp = self.data.site_xpos[self.tcp_site]

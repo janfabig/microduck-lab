@@ -97,7 +97,14 @@ from .runtime import REGISTRY, Brain, Intent, Senses  # noqa: F401
 #: +0.08 +- 0.42 per seed — a tie on the total); ad9876 delivers blocks 6/12
 #: and balls 5/12 against 1/12 and 2/12, 5e9df7 squat cans 12/12 against 7/12.
 #: Chosen for the shapes. Reversible: put "teach-moss_pick-5e9df7" back.
-SHIPPED_RUN = "teach-moss_pick-ad9876"
+#: 2026-09-27: -> `teach-moss_pick-478dad`, ad9876 fine-tuned for objects
+#: CLOSE IN (spawn 0.22-0.34 m) on the reward ad9876 actually trained under
+#: (`gap_from_tcp` — unrecorded until now; three fine-tunes without it
+#: learned to DRAG objects in). Deep picks in its env 81/78/90% at
+#: 0.22-0.28/0.28-0.34/0.36-0.42 m against ad9876's 65/75/93%, card close in
+#: 8/11 against 2/11, no dragging (-5.9 cm). moss-yard, 6 seeds x 300 s,
+#: handover 0.41 m: 19/48 against 16/48. Reversible: "teach-moss_pick-ad9876".
+SHIPPED_RUN = "teach-moss_pick-478dad"
 #: One trained policy per LEG of the loop, each under `moss.CONTRACT_ID` —
 #: the three envs share one 32-slot observation and one 8-action layout, so a
 #: session is interchangeable and only the state that drives it differs. A leg

@@ -1749,3 +1749,29 @@ def test_a_valid_start_stow_episode_begins_with_the_object_in_the_jaws():
         can = env.data.xpos[env.can_body]
         assert env.start_held and env._gripped_now(), (s, env.prop.id)
         assert can[2] > env.prop.half_height + 0.03, (s, env.prop.id, can[2])
+
+
+def test_the_progress_measure_a_pick_trained_on_is_recorded_and_honoured(monkeypatch):
+    """`MICRODUCK_MOSS_GAP_TCP` was an import-time constant the trainer never
+    passed and run.json never recorded. ad9876 trained with it ON (replay:
+    +86/ep on, -3 off; its training said +88), so every fine-tune launched
+    without it paid for pulling the object toward the CHASSIS and learned to
+    drag objects in (+14..+17 cm in 55-60 of 60 episodes) instead of grasping.
+    The trainer's kwargs must carry it, and the env must obey the kwarg."""
+    from types import SimpleNamespace as NS
+
+    from microduck_local.robots.moss_env import MossPickEnv
+    from microduck_local.robots.registry import registry
+
+    body = registry()["moss"]
+    monkeypatch.setenv("MICRODUCK_MOSS_GAP_TCP", "1")
+    assert body.train_env_kwargs(NS(task="pick")).get("gap_from_tcp") is True
+    monkeypatch.setenv("MICRODUCK_MOSS_GAP_TCP", "0")
+    assert body.train_env_kwargs(NS(task="pick")).get("gap_from_tcp") is False
+    # the env obeys the KWARG, whatever the process environment says
+    on = MossPickEnv(seed=0, gap_from_tcp=True)
+    off = MossPickEnv(seed=0, gap_from_tcp=False)
+    on.reset(seed=0)
+    off.reset(seed=0)
+    assert on.gap_from_tcp and not off.gap_from_tcp
+    assert on._reward_gap() != off._reward_gap()
