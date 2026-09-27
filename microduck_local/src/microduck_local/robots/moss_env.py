@@ -747,7 +747,7 @@ def handover_prop(hs: dict) -> "GraspProp":
                      grasp_height_m=moss.GRASP_HEIGHT_M)
 
 
-def sample_prop(rng, litter: bool = False) -> GraspProp:
+def sample_prop(rng, litter: bool = False, ball_frac: float = 0.0) -> GraspProp:
     """One piece of litter: shape, size and mass drawn per episode.
 
     Deliberately a FAMILY OF RIGID PRIMITIVES rather than a deformable sheet.
@@ -757,7 +757,11 @@ def sample_prop(rng, litter: bool = False) -> GraspProp:
     cheap model, and a thin box stands in for a flattened card.
     """
     kinds = ("can", "tall", "squat", "block", "card", "ball")
-    kind = str(rng.choice(kinds + LITTER_KINDS if litter else kinds))
+    # `ball_frac` draws nothing when 0, so every earlier run's episodes replay
+    if ball_frac > 0.0 and rng.random() < ball_frac:
+        kind = "ball"
+    else:
+        kind = str(rng.choice(kinds + LITTER_KINDS if litter else kinds))
     if kind in LITTER_KINDS:
         return sample_litter(rng, kind)
     if kind in ("can", "tall", "squat"):
@@ -946,6 +950,11 @@ SPHERE_CENTRE_M = float(os.environ.get("MICRODUCK_MOSS_SPHERE_CENTRE", "0") or 0
 #: yard's lift losses. `HANDOVER_BANK` holds only the object's x, y and
 #: uprightness with the arm at GRASP_POSE. Seeds 1-12 are held out to score.
 HANDOVER_STATES = os.environ.get("MICRODUCK_MOSS_HANDOVER_STATES", "0") == "1"
+#: THE SHARE OF EPISODES THAT ARE A BALL (on top of the variety's own sixth).
+#: A pinched ball is squeezed out of the jaws unless its centre sits between
+#: the pads (`SPHERE_CENTRE_M`); a fine-tune asking for that with balls in a
+#: sixth of its episodes did not learn it (0281e5). 0 = the variety as is.
+BALL_FRAC = float(os.environ.get("MICRODUCK_MOSS_BALL_FRAC", "0") or 0.0)
 HANDOVER_STATES_FILE = (Path(__file__).parent / "data"
                         / "moss_pick_handover_states_yard.json")
 #: What `publish_grip` puts in `moss.OBS_GRIP` when the depth camera has no
@@ -1220,6 +1229,7 @@ class MossPickEnv(gym.Env):
         arm_camera_mount: int | None = None,
         publish_grip: bool = False,
         handover_states: bool | None = None,
+        ball_frac: float | None = None,
     ):
         #: The wrist mount the policy behind this env TRAINED on, when the
         #: caller knows it (`arm_camera_mount_of`). The model always carries
@@ -1254,6 +1264,7 @@ class MossPickEnv(gym.Env):
                                      else sphere_centre_m)
         #: The wrist depth camera's grip fix in `moss.OBS_GRIP` (see there).
         self.publish_grip = bool(publish_grip)
+        self.ball_frac = float(BALL_FRAC if ball_frac is None else ball_frac)
         self._grip = None
         self._grip_t = -1e9
         self.handover_states = bool(HANDOVER_STATES if handover_states is None
@@ -1571,7 +1582,7 @@ class MossPickEnv(gym.Env):
             self._bind_model()
             return
         if self.prop_variety:
-            self.prop = sample_prop(self.rng, self.litter)
+            self.prop = sample_prop(self.rng, self.litter, self.ball_frac)
             self._bind_model()
 
     def _bind_model(self) -> None:

@@ -609,6 +609,29 @@ def test_a_warm_start_passes_the_repurposed_grip_slots_through(tmp_path):
     assert kw["publish_grip"] is True and kw["handover_states"] is True
 
 
+def test_ball_frac_makes_balls_common_and_changes_nothing_at_zero(monkeypatch):
+    """0281e5 asked for balls held through the centre with balls in a sixth
+    of its episodes and did not learn it; `ball_frac` raises that share. At
+    0 it draws nothing extra, so earlier runs replay the same episodes. It is
+    recorded in run.json."""
+    from types import SimpleNamespace as NS
+
+    from microduck_local.robots.moss_env import MossPickEnv, sample_prop
+    from microduck_local.robots.registry import registry
+
+    r0, r1 = np.random.default_rng(9), np.random.default_rng(9)
+    assert ([sample_prop(r0).id for _ in range(50)]
+            == [sample_prop(r1, ball_frac=0.0).id for _ in range(50)])
+    r = np.random.default_rng(1)
+    share = np.mean([sample_prop(r, ball_frac=0.5).id == "ball" for _ in range(600)])
+    assert 0.5 < share < 0.66, share                   # half + the variety's sixth
+    env = MossPickEnv(seed=0, prop_variety=True, ball_frac=0.5)
+    assert sum(env.reset(seed=s)[0] is not None and env.prop.id == "ball"
+               for s in range(40)) >= 14
+    monkeypatch.setenv("MICRODUCK_MOSS_BALL_FRAC", "0.5")
+    assert registry()["moss"].train_env_kwargs(NS(task="pick"))["ball_frac"] == 0.5
+
+
 def test_every_moss_run_records_the_wrist_mount_it_trained_behind(tmp_path):
     """478dad trained on the retired mount and nothing recorded it, so it was
     scored on the new one with no warning (-4.4 points, 2026-09-27). Every

@@ -2088,6 +2088,7 @@ class MossBody(BodyBase):
             out["sphere_centre_m"] = _f("MICRODUCK_MOSS_SPHERE_CENTRE")
             out["publish_grip"] = _b("MICRODUCK_MOSS_GRIP_OBS")
             out["handover_states"] = _b("MICRODUCK_MOSS_HANDOVER_STATES")
+            out["ball_frac"] = _f("MICRODUCK_MOSS_BALL_FRAC")
         if task == "stow":
             # The stow leg's own knobs. Same rule as the pick's: read the
             # ENVIRONMENT here so the lab's in-process preview shows the same
