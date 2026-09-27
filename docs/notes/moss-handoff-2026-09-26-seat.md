@@ -172,3 +172,19 @@ same capped std 0.607). Suspected, NOT confirmed: ad9876 trained (lab chain from
 teach-moss_pick-combo) under reward knobs that are import-time env constants run.json does
 not record, so a fine-tune optimises a different reward. Next: recover its launch env, or
 diff the per-term reward budget of ad9876 vs a fine-tune on the same episodes.
+
+## 2026-09-27 — the unrecorded reward knob, 478dad, and the carry
+
+* ad9876 trained with `MICRODUCK_MOSS_GAP_TCP=1` (pay the gripper's approach), which nothing
+  recorded: its replay earns +86/ep with it, -3 without (training reported +88). The three
+  failed fine-tunes all trained without it and learned to DRAG objects toward the chassis
+  (+14..+17 cm). Now a recorded kwarg (`gap_from_tcp`), with a test.
+* 478dad = ad9876 + spawn 0.22-0.34 m, knob on: deep picks 81/78/90% at 0.22-0.28/0.28-0.34/
+  0.36-0.42 m (ad9876 65/75/93), card close in 8/11 (2/11), no dragging. Shipped.
+* Handing over at 0.30 m: grips hold (38/44 kept past the lift) but carries were lost on the
+  FIRST swing (to STOW_HIGH) — close-in grips are taken with the tool axis near horizontal
+  (|cos| 0.23 v 0.84 at 0.41 m) and the swing turns them against gravity. Carry squeeze
+  10 mm (was 6) halves those losses (9 -> 4) and doubles 0.30-m delivery (6 -> 13/32); at the
+  default 0.41 m it gives 33/64 v 28/64 (8 seeds, paired +0.62 +- 0.68). 0.30 m + 10 mm =
+  24/64: the close-in handover does NOT yet beat 0.41 m — losses during the LIFT (8-13 per 4
+  seeds) are what remains. Handover stays 0.41 m; squeeze 10 mm is the default.

@@ -230,7 +230,12 @@ class TidyMossParams:
     #: a 66 mm can but WIDER than a 40 mm block or a 50 mm ball, so the lift
     #: opened the jaws on them — MEASURED in moss-yard (2026-09-26), blocks
     #: lifted 21 times and balls 16 and not one survived the lift.
-    carry_interference_m: float = 0.006
+    #: 10 mm, not 6 (2026-09-27): the carry's first swing (up to STOW_HIGH)
+    #: rotates the wrist a long way and a close-in grip slid out there — at
+    #: a 0.30 m handover 9 losses on that leg in 4 yard seeds, 4 at 10 mm, and
+    #: objects in the bin 6 -> 13/32. At the default 0.41 m handover, 8 seeds:
+    #: 33/64 against 28/64 (paired +0.62 +- 0.68 per seed — not resolved alone).
+    carry_interference_m: float = 0.010
     carry_jaw_relative: bool = True
     #: ABANDON THE CARRY WHEN THE CAN IS GONE. The scripted stow never asked
     #: whether it was still holding anything: it ran all three ramps and
