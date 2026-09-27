@@ -283,3 +283,17 @@ in the lift, 3 in the stow, 3 kept. Most handovers were at 0.40-0.54 m (not clos
   same state the env's policy lifts the object and the yard's (with `policy_lift_m`) drops
   it, so the observation or the stepping during the pick differs. Next instrument: step the
   yard and the replayed env side by side from one snapshot and diff the 32 slots per tick.
+
+## FOUND: the yard ran the pick at 50 Hz (2026-09-27)
+
+Side by side from one snapshot (seed 4, t 213.36, can1; `side_by_side.py` in scratch), the
+yard's brain stepped the pick every 0.02 s — `pick_at_control_hz` was off, so each action's
+0.03 rad / 4 mm nudge was applied 50 times a second against the 25 it trained under: arm and
+jaw at double speed. It had been switched off on an ad9876 measurement (8 -> 4 of 18 cans)
+that could not resolve it and was never re-measured. 478dad at 25 Hz, moss-yard 24 seeds x
+300 s: **99 v 71 in the bin, paired +1.17 +- 0.36 per seed (+1.17 in each half)**; lift
+losses 39 -> 24, kept 65 -> 92, cans kept 20 -> 45. Grips are as often shallow (53 v 48) —
+they hold. Now ON by default, with a test planted against the 50 Hz regression.
+Also in that diff, not yet chased: the axis slots (28-30) disagree yard v env (mean 0.67 over
+40 steps; partly the env replay starting with a cleared tracker), and the brain does not
+clip arm commands to the joint range where the env does.

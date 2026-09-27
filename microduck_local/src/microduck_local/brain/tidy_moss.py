@@ -449,9 +449,14 @@ class TidyMossParams:
     #: as the pick env's reset does — the same fix the stow and fold legs got.
     pick_clean_start: bool = True
     #: Run the pick at its trained 25 Hz, holding the command between control
-    #: ticks (per world tick it integrates at twice its trained rate). An
-    #: earlier measurement (8 -> 4 of 18 cans) could not separate the two.
-    pick_at_control_hz: bool = False
+    #: ticks (per world tick it integrates at twice its trained rate — arm
+    #: and jaw at double speed). An earlier measurement (8 -> 4 of 18 cans,
+    #: ad9876) could not separate the two. ON since 2026-09-27, found by
+    #: diffing the yard's pick against the env's from one snapshot (the yard
+    #: stepped every 0.02 s): 478dad in moss-yard, 24 seeds x 300 s, 99 v 71
+    #: in the bin (paired +1.17 +- 0.36 per seed, +1.17 in each half), lift
+    #: losses 39 -> 24, cans kept 20 -> 45.
+    pick_at_control_hz: bool = True
 
 
 def _shipped_policy() -> str | None:
@@ -972,8 +977,9 @@ class TidyMoss:
         # cans of 18 to 4. So the mismatch is real and correcting it alone is
         # not the fix — 18 events cannot separate 4 from 8 with any
         # confidence either, so read this as "tried, did not help" rather
-        # than "harmful". Left running per world tick, which is what every
-        # number in this file was measured under.
+        # than "harmful". THE PICK is now held to 25 Hz by its caller
+        # (`pick_at_control_hz`, on since 2026-09-27: 99 v 71 in 24 yard
+        # seeds with 478dad); this method itself still runs per call.
         return self._policy_tick(senses, fix, task)
 
     def _policy_tick(self, senses: Senses, fix, task: str = "pick"):

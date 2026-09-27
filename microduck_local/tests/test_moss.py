@@ -1700,6 +1700,30 @@ def test_the_brain_folds_with_the_learned_leg_at_25hz_on_a_leash():
                                                          abs=0.005)
 
 
+def test_the_pick_runs_at_its_trained_25_hz_in_the_brain():
+    """Stepped every 50 Hz world tick, the pick moved arm and jaw at twice the
+    speed it trained at; held to 25 Hz, 478dad put 99 objects in the bin over
+    24 yard seeds against 71 (2026-09-27)."""
+    from microduck_local.brain.runtime import Senses
+    from microduck_local.brain.tidy_moss import TidyMoss
+
+    b = TidyMoss()
+    if b._sess is None:
+        pytest.skip("no pick policy on disk")
+    arm = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    arm[moss.GRIPPER_JOINT] = 0.041
+    b._to("creep", 0.0)
+    b._fix = (0.40, 0.0)
+    runs = 0
+    for k in range(10):
+        before = b._last_policy_t
+        b.step(Senses(t=0.02 * k, odom=(0.0, 0.0, 0.0), speed=0.0,
+                      arm=dict(arm)))
+        runs += b._last_policy_t != before
+    assert b.state == "creep"
+    assert runs == 5, runs                            # 25 Hz, not 50
+
+
 def test_a_can_dropped_on_the_lift_is_noticed_and_the_arm_goes_straight_home():
     """8 of 10 drops in the yard happen at the start of the carry and the
     empty-jaw check only ran in `stow`, so the brain noticed 2.8 s late and
