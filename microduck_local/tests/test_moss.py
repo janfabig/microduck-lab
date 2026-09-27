@@ -485,6 +485,42 @@ def test_the_wrist_camera_sits_where_a_bracket_can_hold_it():
     assert worst >= 0.015, f"lens comes within {worst * 100:.1f} cm of the forearm"
 
 
+def test_the_wrist_depth_fix_says_where_the_object_sits_in_the_jaws():
+    """A range cannot see grip depth (122 yard lifts: 120-124 mm median deep
+    or shallow, corr -0.1); a depth camera's 3-D fix can. `grip` is the
+    object in the TOOL frame, with the range's noise — checked here against a
+    can posed a known distance along the approach, at the grasp pose, where
+    the tool frame is nothing like the world's."""
+    from microduck_local.robots import moss_env as ME
+    from microduck_local.robots.moss_wrist import MossTargetSensors, _Geom
+
+    env = ME.MossPickEnv(seed=0)
+    env.reset(seed=0)
+    m, d = env.model, env.data
+    g = m.body(moss.GRIPPER_FRAME_BODY).id
+    tcp = d.site_xpos[env.tcp_site].copy()
+    R = d.site_xmat[env.tcp_site].reshape(3, 3).copy()
+    # along the approach AND sideways along the tool's x, which the shoulder
+    # pan has turned well away from the world's x
+    d.qpos[env.can_qadr:env.can_qadr + 3] = tcp + R @ np.array([0.03, 0.0, 0.03])
+    mujoco.mj_forward(m, d)
+    want = R.T @ (d.xpos[env.can_body] - d.site_xpos[env.tcp_site])
+    world = d.xpos[env.can_body] - d.site_xpos[env.tcp_site]
+    assert np.linalg.norm(world - want) > 3 * ME.ARM_DET_RANGE_NOISE  # frames differ
+
+    ts = MossTargetSensors(m, "", seed=1)
+    got = []
+    for k in range(60):
+        d.time = 0.02 * k
+        ts.tick(d, env.driver, [(env.can_body, _Geom("cylinder", 0.033, 0.0575))])
+        fix = ts.read()["grip"]
+        if fix is not None and (not got or fix != got[-1]):
+            got.append(fix)
+    assert len(got) >= 8                              # 15 Hz over 1.2 s
+    mean = np.mean(got, axis=0)
+    assert np.linalg.norm(mean - want) < 3 * ME.ARM_DET_RANGE_NOISE, (mean, want)
+
+
 def test_every_moss_run_records_the_wrist_mount_it_trained_behind(tmp_path):
     """478dad trained on the retired mount and nothing recorded it, so it was
     scored on the new one with no warning (-4.4 points, 2026-09-27). Every

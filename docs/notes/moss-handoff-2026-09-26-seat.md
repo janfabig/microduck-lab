@@ -377,6 +377,41 @@ pick leg trained on (slots 26, 28-30 via `_sense_arm` / `moss_wrist`) came from 
 * `moss_bin.BIN_LOOK_POSE` sees 0% of the bin from the new mount (drop_target only; off by
   default). Re-searched: (-1.776, -1.195, 0.559, 1.507, 2.338), 94% of the floor; the whole
   floor needs wrist_flex on its stop.
-* NOT landed yet: every pick baseline in this note is on the old mount, so landing it moves
-  them. Patch + test (fails on the old mount): `wrist-mount.patch` in scratch. Next: land
-  it, retrain the pick warm from 478dad under the new mount, A/B against 478dad-on-old.
+* LANDED as 723a1a3 (every pick baseline above it is on the old mount). Retrain 0a9726
+  (478dad's recipe, 1.5M steps, new mount), 248 paired seeds under its trained settings:
+  87.1% v 478dad-on-new 84.7% (+2.4 +- 1.9) and v 478dad-on-old 89.1% (-2.0 +- 1.8);
+  base-free cans env 79.8% v 86.3%; moss-yard 93 v 93. Nothing resolved: 478dad stays.
+
+## The wrist camera moved (723a1a3): no retrain needed (2026-09-27)
+
+Only the pick reads the wrist camera (478dad: attitude, proximity, size). 478dad under old v
+new mount, env 120 episodes: 105 v 105 picked — the proximity slot is live 88% v 61% and
+reads ~4 cm longer (median 0.141 v 0.099 m, +0.6 sd on its normaliser), and the policy does
+not care. moss-yard 24 seeds: 94 v 99 in bin (paired -0.21 +- 0.43). A fine-tune under the
+new camera (0a9726, 478dad's settings, 1.5M steps): env 101/120, yard 91 v 94 (paired
+-0.12 +- 0.45). Not shipped; 478dad stays. The mount is a code constant, so run.json cannot
+say which camera a run trained under — written on 0a9726's record by hand.
+* Since b515d93 it can: every MOSS run records `arm_camera_mount` in its env_kwargs (a
+  run.json without it reads as mount 1, the retired one), and MossPickEnv / tidy_moss warn
+  when a leg that saw the wrist camera runs behind another mount. 0a9726 backfilled to 2.
+
+## The 3-D wrist fix and a grab check (2026-09-27)
+
+* The wrist sensor passed on ONE number, the lens-to-object range, and it cannot see grip
+  depth: 122 yard lifts with the new camera, range median 120-124 mm whether the object was
+  deep or at the fingertips (corr -0.1). A depth camera's fix is a 3-D point, so
+  `moss_wrist` now also publishes `grip` — the object in the tool frame, same 8 mm noise per
+  axis, only when 3 of 5 rays from the lens reach it past the robot (mj_ray, visual meshes
+  included). In the yard: available on 96% of pick ticks within 10 cm (optimistic against
+  the mount sweep's 88%), corr 0.93 with true grip depth, mean error 7.8 mm; at lift entry
+  deep grips read ~14 mm, fingertip ones ~53 mm. No policy or brain reads it yet.
+* Using it, 24 seeds v 478dad new camera (94 in bin) — both WORSE, resolved, both halves:
+  - grab check (re-open and let the pick continue if > 30 mm, 2 re-seats): 72, paired
+    -0.92 +- 0.38. Shallow grips at the lift 41 -> 3, lift losses 12 -> 4 — the filter
+    works — but carries 125 -> 91: re-opening rarely becomes a deeper grip, and many
+    fingertip grips would have been carried anyway.
+  - local retry (restart the pick in place once when its 8 s window runs out): 61, paired
+    -1.38 +- 0.42. A pick restarted from a failed state rarely succeeds; it costs 8 s.
+  Reverted (patch `grab_check_retry.patch` in scratch). Rejecting a grip does not make a
+  better one: the pick has to LEARN to grip deep, with the 3-D fix as an input (new obs
+  contract, pick retrain).
