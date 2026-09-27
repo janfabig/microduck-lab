@@ -420,6 +420,16 @@ class TidyMoss:
                 sess = ort.InferenceSession(
                     path, providers=["CPUExecutionProvider"])
                 self._sessions[task] = (sess, sess.get_inputs()[0].name)
+        #: What each loaded leg TRAINED with, read off its own run.json: the
+        #: extra observation slots it expects filled, and whether its base was
+        #: locked. `teach-moss_pick-ad9876` trained with attitude, proximity,
+        #: size AND a locked base; handed zeros and a live base it put 4
+        #: objects in the bin over 6 yard seeds (2026-09-26).
+        self._flags: dict[str, dict] = {}
+        for task, path in paths.items():
+            fl = dict(ME.obs_env_kwargs(path))
+            fl["base_lock"] = bool(ME.eval_env_kwargs(path).get("base_lock"))
+            self._flags[task] = fl
         # `_sess`/`_in` stay the PICKUP session: the creep and close states
         # read them directly and every existing test names them.
         if "pick" in self._sessions:
@@ -667,7 +677,8 @@ class TidyMoss:
             moss.CAMERA_POS[1] + r * math.sin(best.bearing)])
         self._track_t = senses.t
 
-    def _policy_obs(self, senses: Senses, fix) -> np.ndarray | None:
+    def _policy_obs(self, senses: Senses, fix,
+                    task: str = "pick") -> np.ndarray | None:
         """`moss.CONTRACT_ID`'s 32 floats, built from what a BRAIN is handed.
 
         The env builds this from its own `MjData`; here it comes off
@@ -719,6 +730,20 @@ class TidyMoss:
         # sight is a train/deploy mismatch in the only 30 cm that matter.
         o[moss.OBS_TARGET_SEEN] = (
             1.0 if (senses.t - self._track_t) < 0.6 else 0.0)
+        # THE SLOTS THIS LEG TRAINED WITH, from the wrist/front cameras
+        # (`Senses.target_obs`), exactly as its env fills them — and left at
+        # zero for a leg that trained with them dead (a live value there
+        # would clip against a normaliser whose var is 3e-10).
+        fl = self._flags.get(task, {})
+        tob = senses.target_obs or {}
+        if fl.get("publish_attitude") and tob.get("att") is not None:
+            o[moss.OBS_TARGET_AXIS] = tob["att"][:2]
+            o[moss.OBS_TARGET_UPRIGHT] = tob["att"][2]
+        if fl.get("publish_proximity"):
+            o[moss.OBS_TARGET_BASE.start + 2] = float(tob.get("range") or 0.0)
+        if (fl.get("publish_size") and o[moss.OBS_TARGET_SEEN] > 0
+                and tob.get("top") is not None):
+            o[moss.OBS_SPARE] = float(tob["top"])
         #: The last vector actually published to a policy. Kept because the
         #: only way to find a train/deploy gap is to diff this against what
         #: the env hands the same policy at its reset, slot by slot — every
@@ -852,7 +877,7 @@ class TidyMoss:
         trained under, so these two have to agree or the same network does
         something else on the robot than it did in the env.
         """
-        obs = self._policy_obs(senses, fix)
+        obs = self._policy_obs(senses, fix, task)
         if obs is None:
             return (0.0, 0.0, 0.0), None
         sess, in_name = self._sessions[task]
@@ -867,6 +892,10 @@ class TidyMoss:
         cmd[moss.GRIPPER_JOINT] = float(np.clip(
             cmd[moss.GRIPPER_JOINT] + self._act[5] * 0.004, 0.0, 0.041))
         twist = (float(self._act[6]) * 0.20, 0.0, float(self._act[7]) * 1.0)
+        if self._flags.get(task, {}).get("base_lock"):
+            # it trained with the base LOCKED: its base outputs were no-ops
+            # and are unconstrained, so they must not drive the robot
+            twist = (0.0, 0.0, 0.0)
         self._held_twist = twist
         return twist, dict(cmd)
 

@@ -84,3 +84,38 @@ on. The yard's losses are upstream: block 0/6 and ball 0/6 are almost never grip
 and fingertip grips (>45 mm from the tool point) never survive the carry (0/7).
 `release_high` kept, default OFF. Also found: `_held()`'s 2.0 mm servo-stall test
 reads a physically carried can as dropped at the brain's 27 mm carry squeeze.
+
+## Pick retrain, step 1 — the pick policies scored IN THE YARD (6 seeds x 300 s, 6 objects)
+
+| pick | in bin | attempts | lifts | kept past lift | reached release |
+|---|---|---|---|---|---|
+| teach-moss_pick-5e9df7 (brain's) | 13 | 77 | 39 | 21 | 14 |
+| moss-pick-v1 | 12 | 78 | 34 | 19 | 15 |
+| teach-moss_pick-d879c3 | 11 | 83 | 44 | 22 | 16 |
+| teach-moss_pick-ad9876 (record.json pick) | 4 | 90 | 32 | 18 | 14 |
+
+* The three can-only picks are indistinguishable at 6 seeds (+-1): the yard cannot rank them
+  at this sample, so no env criterion can be validated against a ranking among them.
+* Funnel (pooled): attempt->lift ~49%, lift->kept ~54%, kept->release ~71%, release->bin ~80%.
+  Ball: 0 lifts in any run. Block: 1-3 lifts, 0 kept. Squat: about half.
+* ad9876 — the only six-shape pick (88% in its env) — trained with publish_attitude,
+  publish_size, publish_proximity AND base_lock. tidy_moss publishes none of them and does
+  not lock the base; the world has no wrist camera at all (head-camera detections only).
+  Its 4/36 is a deployment mismatch, not its skill: 14 releases, 4 in the bin at the end.
+
+## ad9876 given what it trained with — the wrist camera in the yard (robots/moss_wrist.py)
+
+The world now produces MOSS's wrist/front-camera readings of the object nearest the jaws
+by calling the pick env's OWN `_sense_arm` / `_front_attitude` / `_true_attitude`
+(`Senses.target_obs`), and tidy_moss fills exactly the slots each leg trained with and
+zeroes the base twist for a leg trained base-locked (read from its run.json). Slot diff
+yard vs env: all alive; the yard's wrist range is 0.27 m vs 0.06 m in the env (the yard
+hands over FARTHER), and yard objects stand (uprightness 0.96 vs 0.38).
+
+ad9876 in the yard, 6 seeds x 300 s (in bin / lifts / kept / releases):
+no inputs, base free 4/32/18/14; inputs, base free 5/23/16/14; no inputs, base locked
+1/25/12/7; inputs + lock 0/28/7/1 — against 5e9df7's 13/39/21/14. The inputs were not
+the gap (+1); the base lock is fatal because the yard hands over beyond the arm's reach;
+and it never lifts block/ball/squat in the yard. Its env skill does not transfer: the
+handover situations differ. Also open: only 5 of its 14 releases end in the bin.
+Default brain unchanged (5e9df7 has no extra inputs).

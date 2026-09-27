@@ -576,6 +576,7 @@ class WorldState:
         lidar = getattr(d, "lidar", None)
         lf = None if lidar is None else lidar.last
         arm_fn = getattr(d, "arm_qpos", None)
+        target_obs = self._moss_target_obs(d)
         return Senses(t=w.t, tof=tof, tof_age=tof_age,
                       det=det, det_age=None if det is None else w.t - det.t,
                       lidar=lf, lidar_age=None if lf is None else w.t - lf.t,
@@ -585,7 +586,31 @@ class WorldState:
                       # (`Senses.arm`): a commanded pose is not the pose, and
                       # the 28.5 mm that costs is on that field.
                       arm=None if arm_fn is None else arm_fn(w.data),
-                      holding=d.holding is not None, skill=d.skill, bumped=w.bumped(d))
+                      holding=d.holding is not None, skill=d.skill, bumped=w.bumped(d),
+                      target_obs=target_obs)
+
+    def _moss_target_obs(self, d):
+        """MOSS's wrist/front-camera readings of the object nearest its jaws
+        (`robots/moss_wrist`), or None for any other body."""
+        w = self.world
+        ts = getattr(d, "_moss_sensors", None)
+        if ts is None:
+            from .robots import moss_wrist
+            prefix = getattr(d, "prefix", "")
+            if not moss_wrist.MossTargetSensors.fits(w.model, prefix):
+                d._moss_sensors = False
+                return None
+            ts = moss_wrist.MossTargetSensors(w.model, prefix,
+                                              seed=hash(prefix) & 0xFFFF)
+            props = [p for p in (self.scenario.props if self.scenario else [])
+                     if getattr(p, "cls", "") == "toy" and p.mass > 0]
+            ts.candidates = [(w.model.body(p.id).id, moss_wrist.geom_of(p))
+                             for p in props]
+            d._moss_sensors = ts
+        if ts is False:
+            return None
+        ts.tick(w.data, d.driver, ts.candidates)
+        return ts.read()
 
     def drive(self, cmd: np.ndarray, mode: str) -> None:
         """Set every duck's command for this tick. A possessed person takes
