@@ -520,6 +520,95 @@ def test_the_wrist_depth_fix_says_where_the_object_sits_in_the_jaws():
     assert np.linalg.norm(mean - want) < 3 * ME.ARM_DET_RANGE_NOISE, (mean, want)
 
 
+def test_the_grip_reaches_the_pick_the_same_way_in_env_and_brain():
+    """`publish_grip` puts the depth camera's grip fix in `moss.OBS_GRIP`
+    (the duplicate second-jaw slots): (distance from the tool point, 1) when
+    fresh, (GRIP_UNSEEN_M, 0) when not — in the env AND in tidy_moss, or a
+    leg trained on one is fed something else by the other."""
+    from microduck_local.brain.runtime import Senses
+    from microduck_local.brain.tidy_moss import TidyMoss
+    from microduck_local.robots import moss_env as ME
+
+    env = ME.MossPickEnv(seed=0, publish_grip=True)
+    o, _ = env.reset(seed=0)
+    assert tuple(o[list(moss.OBS_GRIP)]) == (ME.GRIP_UNSEEN_M, 0.0)
+    env._grip, env._grip_t = np.array([0.0, 0.03, 0.04]), float(env.data.time)
+    o = env._obs()
+    assert o[moss.OBS_GRIP[0]] == pytest.approx(0.05) and o[moss.OBS_GRIP[1]] == 1.0
+    plain = ME.MossPickEnv(seed=0)
+    o2, _ = plain.reset(seed=0)
+    assert o2[6] == pytest.approx(o2[5], abs=2e-3)      # near-duplicates, as before
+
+    b = TidyMoss()
+    b._flags["pick"] = {"publish_grip": True}
+    arm = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    arm[moss.GRIPPER_JOINT] = 0.03
+    sn = Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=arm,
+                target_obs={"grip": (0.0, 0.03, 0.04)})
+    ob = b._policy_obs(sn, (0.3, 0.0), "pick")
+    assert ob[moss.OBS_GRIP[0]] == pytest.approx(0.05) and ob[moss.OBS_GRIP[1]] == 1.0
+    sn = Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=arm, target_obs={})
+    ob = b._policy_obs(sn, (0.3, 0.0), "pick")
+    assert tuple(ob[list(moss.OBS_GRIP)]) == (ME.GRIP_UNSEEN_M, 0.0)
+
+
+def test_a_handover_state_episode_starts_where_the_yard_handed_over():
+    """The yard's fingertip grips come from the STATES it hands the pick
+    (9 of 24 settled grips from them, 3 of 43 from the env's spawns), so
+    `handover_states` starts an episode in one: the arm's joints, the target
+    object's pose and shape, and a fresh fix of it — a replay that started
+    with an empty tracker did not reproduce the yard."""
+    import json as _json
+
+    from microduck_local.robots import moss_env as ME
+
+    bank = _json.loads(ME.HANDOVER_STATES_FILE.read_text())
+    assert len(bank) >= 500 and {b["seed"] for b in bank}.isdisjoint(range(1, 13))
+    env = ME.MossPickEnv(seed=3, handover_states=True, publish_grip=True)
+    o, _ = env.reset(seed=3)
+    hs = env._hs
+    assert hs is not None and env.prop.shape == hs["shape"]
+    m, d = env.model, env.data
+    for j, v in zip(moss.ARM_JOINTS, hs["arm"]):
+        assert d.qpos[m.joint(j).qposadr[0]] == pytest.approx(v, abs=0.02), j
+    bx, by, byaw = env.driver.pose(d)
+    c, s_ = np.cos(-byaw), np.sin(-byaw)
+    dx, dy = d.xpos[env.can_body][0] - bx, d.xpos[env.can_body][1] - by
+    got = (dx * c - dy * s_, dx * s_ + dy * c)
+    assert np.hypot(got[0] - hs["pos_b"][0], got[1] - hs["pos_b"][1]) < 0.01
+    assert o[moss.OBS_TARGET_SEEN.start] == 1.0          # it starts with a fix
+
+
+def test_a_warm_start_passes_the_repurposed_grip_slots_through(tmp_path):
+    """478dad's normaliser describes the duplicate jaw slots there (mean
+    -0.0115, sd 0.013); a grip distance of 0.15 would arrive as z = +12 and
+    clip. A run that turns `publish_grip` on over a donor that had it off
+    must start those slots as pass-through — and one whose donor had it on
+    must not. The flags reach run.json."""
+    import json as _json
+    from types import SimpleNamespace as NS
+
+    from microduck_local.robots.registry import registry
+
+    body = registry()["moss"]
+    donor = tmp_path / "donor"
+    donor.mkdir()
+    (donor / "run.json").write_text(_json.dumps({"env_kwargs": {}}))
+    assert body.repurposed_obs_dims({"publish_grip": True}, donor) == list(moss.OBS_GRIP)
+    assert body.repurposed_obs_dims({"publish_grip": False}, donor) == []
+    (donor / "run.json").write_text(_json.dumps({"env_kwargs": {"publish_grip": True}}))
+    assert body.repurposed_obs_dims({"publish_grip": True}, donor) == []
+    import os as _os
+    _os.environ["MICRODUCK_MOSS_GRIP_OBS"] = "1"
+    _os.environ["MICRODUCK_MOSS_HANDOVER_STATES"] = "1"
+    try:
+        kw = body.train_env_kwargs(NS(task="pick"))
+    finally:
+        del _os.environ["MICRODUCK_MOSS_GRIP_OBS"]
+        del _os.environ["MICRODUCK_MOSS_HANDOVER_STATES"]
+    assert kw["publish_grip"] is True and kw["handover_states"] is True
+
+
 def test_every_moss_run_records_the_wrist_mount_it_trained_behind(tmp_path):
     """478dad trained on the retired mount and nothing recorded it, so it was
     scored on the new one with no warning (-4.4 points, 2026-09-27). Every

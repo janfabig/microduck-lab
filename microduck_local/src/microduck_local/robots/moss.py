@@ -1006,6 +1006,15 @@ OBS_TARGET_UPRIGHT = slice(30, 31)
 OBS_DROP = slice(28, 30)
 #: Still free.
 OBS_SPARE = slice(31, 32)
+#: THE GRIP, from the wrist depth camera (`publish_grip`): (distance of the
+#: object from the tool point, m; 1 when that fix is fresh) — (0.15, 0) when
+#: it is not. In the two slots that only ever DUPLICATED another: the second
+#: jaw is tied to the first (one servo, an equality constraint), so its
+#: position (6) and velocity (13) track slots 5 and 12 to within a fraction
+#: of a millimetre — 478dad's normaliser has the same mean and sd for each
+#: pair to four places. A leg trained without the flag sees those duplicates
+#: as before; one trained with it sees the grip there. The run records which.
+OBS_GRIP = (6, 13)
 #: 32 = 28 used + 4 reserved.
 OBS_DIM = 32
 #: Five arm targets, ONE gripper command, and the base twist.
@@ -1988,6 +1997,22 @@ class MossBody(BodyBase):
     # `moss_env.TASKS` handed the palette a tuple of `str` and four lab tests
     # died on `b.trainer`. The env's task names are `env_class`'s business.
 
+    def repurposed_obs_dims(self, env_kwargs: dict, donor_dir) -> list[int]:
+        """Slots whose MEANING a warm start changes: the donor's normaliser
+        holds statistics of something else there, so they must start as
+        pass-through (`train.py`). `publish_grip` puts the grip in the
+        duplicate jaw slots (`OBS_GRIP`) of a donor that had not."""
+        import json as _json
+        from pathlib import Path as _P
+        if not env_kwargs.get("publish_grip"):
+            return []
+        try:
+            kw = _json.loads((_P(donor_dir) / "run.json").read_text()
+                             ).get("env_kwargs") or {}
+        except (OSError, ValueError):
+            kw = {}
+        return [] if kw.get("publish_grip") else list(OBS_GRIP)
+
     def train_env_kwargs(self, args) -> dict:
         """MOSS's per-body knob: which rung of the current task's ladder.
 
@@ -2061,6 +2086,8 @@ class MossBody(BodyBase):
             out["gap_from_tcp"] = _b("MICRODUCK_MOSS_GAP_TCP")
             out["litter"] = _b("MICRODUCK_MOSS_LITTER")
             out["sphere_centre_m"] = _f("MICRODUCK_MOSS_SPHERE_CENTRE")
+            out["publish_grip"] = _b("MICRODUCK_MOSS_GRIP_OBS")
+            out["handover_states"] = _b("MICRODUCK_MOSS_HANDOVER_STATES")
         if task == "stow":
             # The stow leg's own knobs. Same rule as the pick's: read the
             # ENVIRONMENT here so the lab's in-process preview shows the same

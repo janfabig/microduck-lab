@@ -735,6 +735,18 @@ def sample_litter(rng, kind: str) -> GraspProp:
                      rgba=(0.30, 0.55, 0.85, 1.0))
 
 
+def handover_prop(hs: dict) -> "GraspProp":
+    """A handover state's object as the pick env's prop. The state keeps the
+    scenario's FULL extents (a cylinder's are radius, radius, full height)."""
+    sx, sy, sz = (list(hs["size"]) + [0.0, 0.0, 0.0])[:3]
+    size = {"cylinder": (sx, sz / 2.0), "sphere": (sx,),
+            "box": (sx / 2.0, sy / 2.0, sz / 2.0)}[hs["shape"]]
+    return GraspProp(id=str(hs["obj"]).rstrip("0123456789"), shape=hs["shape"],
+                     size=tuple(float(v) for v in size), mass=float(hs["mass"]),
+                     jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
+                     grasp_height_m=moss.GRASP_HEIGHT_M)
+
+
 def sample_prop(rng, litter: bool = False) -> GraspProp:
     """One piece of litter: shape, size and mass drawn per episode.
 
@@ -925,6 +937,20 @@ DEEP_GRIP_M = float(os.environ.get("MICRODUCK_MOSS_DEEP_GRIP", "0") or 0.0)
 #: 16-20 mm 9/12, over 20 mm 2/9. The tool point is no reference for this —
 #: the pad midpoint moves 10-15 mm off it as the jaw closes.
 SPHERE_CENTRE_M = float(os.environ.get("MICRODUCK_MOSS_SPHERE_CENTRE", "0") or 0.0)
+#: START WHERE THE YARD REALLY HANDS OVER — the whole state, not just where the
+#: object is. `data/moss_pick_handover_states_yard.json`: every `creep` entry of
+#: tidy_moss with 478dad in moss-yard, seeds 13-72 (2026-09-27): the arm's
+#: joints, the target object's pose in the base frame and its shape, size and
+#: mass. From those states the pick grips at the fingertips 9 times in 24,
+#: from the env's own spawns 3 in 43 — and fingertip grips are most of the
+#: yard's lift losses. `HANDOVER_BANK` holds only the object's x, y and
+#: uprightness with the arm at GRASP_POSE. Seeds 1-12 are held out to score.
+HANDOVER_STATES = os.environ.get("MICRODUCK_MOSS_HANDOVER_STATES", "0") == "1"
+HANDOVER_STATES_FILE = (Path(__file__).parent / "data"
+                        / "moss_pick_handover_states_yard.json")
+#: What `publish_grip` puts in `moss.OBS_GRIP` when the depth camera has no
+#: fresh fix: a grip distance no jaw closes on.
+GRIP_UNSEEN_M = 0.15
 #: START WHERE THE YARD HANDS OVER. `data/moss_pick_handovers_yard.npy`: 310
 #: real handovers — the object nearest the jaws the tick tidy_moss enters
 #: `creep` (moss-yard seeds 10-41; objects already in the bin removed).
@@ -999,7 +1025,8 @@ BAND_Y = 0.30
 #: really makes 65 — a "result" that would have been reported as a collapse.
 #: A flag that changes the OBSERVATION belongs here; one that changes only the
 #: reward (jaw_align, can_topple, gap_tcp) does not.
-OBS_FLAGS = ("publish_attitude", "publish_size", "publish_proximity")
+OBS_FLAGS = ("publish_attitude", "publish_size", "publish_proximity",
+             "publish_grip")
 #: ...and the flags that change the DYNAMICS a policy trained under. Not the
 #: observation, so not in OBS_FLAGS, but just as fatal to get wrong: a policy
 #: trained with `base_lock` learns its base outputs are no-ops and leaves them
@@ -1191,6 +1218,8 @@ class MossPickEnv(gym.Env):
         litter: bool | None = None,
         sphere_centre_m: float | None = None,
         arm_camera_mount: int | None = None,
+        publish_grip: bool = False,
+        handover_states: bool | None = None,
     ):
         #: The wrist mount the policy behind this env TRAINED on, when the
         #: caller knows it (`arm_camera_mount_of`). The model always carries
@@ -1223,6 +1252,15 @@ class MossPickEnv(gym.Env):
         self.deep_grip_m = float(deep_grip_m)
         self.sphere_centre_m = float(SPHERE_CENTRE_M if sphere_centre_m is None
                                      else sphere_centre_m)
+        #: The wrist depth camera's grip fix in `moss.OBS_GRIP` (see there).
+        self.publish_grip = bool(publish_grip)
+        self._grip = None
+        self._grip_t = -1e9
+        self.handover_states = bool(HANDOVER_STATES if handover_states is None
+                                    else handover_states)
+        self._hstates = (json.loads(HANDOVER_STATES_FILE.read_text())
+                         if self.handover_states else None)
+        self._hs = None
         #: A CONSTRUCTOR ARGUMENT, not only the import-time constant, so it
         #: reaches run.json. MEASURED 2026-09-27: ad9876 replays at +86/ep
         #: with it on (its training reported +88) and -3 with it off; every
@@ -1526,6 +1564,12 @@ class MossPickEnv(gym.Env):
         23 ms of recompile against a 355 ms episode (6.6%) is the price of
         training on litter instead of on one particular can.
         """
+        self._hs = None
+        if self._hstates is not None:
+            self._hs = self._hstates[int(self.rng.integers(len(self._hstates)))]
+            self.prop = handover_prop(self._hs)
+            self._bind_model()
+            return
         if self.prop_variety:
             self.prop = sample_prop(self.rng, self.litter)
             self._bind_model()
@@ -1718,6 +1762,8 @@ class MossPickEnv(gym.Env):
             self.data.qvel[self.can_dadr + 3] = topple * math.cos(yaw)
             self.data.qvel[self.can_dadr + 4] = topple * math.sin(yaw)
         mujoco.mj_forward(self.model, self.data)
+        if self._hs is not None:
+            self._pose_handover_state(self._hs)
         #: The lab's trainee preview reads this off the env by name, as it does
         #: on every other body's (`walk_env`, `mars_env`). Called `steps` for one
         #: run, which killed the lab's whole duck loop the moment a MOSS
@@ -1749,6 +1795,14 @@ class MossPickEnv(gym.Env):
         self._fix_t = -1e9
         self._pending = []
         self._next_det_t = float(self.data.time)
+        self._grip = None
+        self._grip_t = -1e9
+        if self._hs is not None:
+            # The yard's brain enters `creep` holding a fresh fix of its
+            # target; a replay that started blind did not reproduce the yard.
+            self._fix = np.array(self.data.xpos[self.can_body][:2], float)
+            self._seen_w = self._fix.copy()
+            self._fix_t = float(self.data.time)
         self._sense()
         self.last_action[:] = 0.0
         self.prev_action[:] = 0.0
@@ -2106,6 +2160,16 @@ class MossPickEnv(gym.Env):
         # KEEP THE RANGE. It was computed above only to decide visibility.
         self._arm_rng = max(0.0, rng + self.rng.normal(0.0, ARM_DET_RANGE_NOISE))
         self._arm_rng_t = t
+        if getattr(self, "publish_grip", False) and self._arm_sees():
+            # A DEPTH camera's fix is a 3-D point, so it says where the object
+            # sits IN THE JAWS — the tool frame — which the range cannot: over
+            # 122 yard lifts it read 120-124 mm (median) whether the grip was
+            # deep or at the fingertips (corr -0.1). Same noise per axis.
+            Rt = np.asarray(self.data.site_xmat[self.tcp_site], float).reshape(3, 3)
+            rel = Rt.T @ (np.asarray(self.data.xpos[self.can_body], float)
+                          - np.asarray(self.data.site_xpos[self.tcp_site], float))
+            self._grip = rel + self.rng.normal(0.0, ARM_DET_RANGE_NOISE, 3)
+            self._grip_t = t
         c, sn, upright = self._true_attitude()
         # Noise on the ANGLE, not on cos and sin separately — perturbing them
         # independently makes a vector that is not a unit vector, which is
@@ -2118,6 +2182,67 @@ class MossPickEnv(gym.Env):
         while self._pending_att and self._pending_att[0][0] <= t + 1e-9:
             _at, att = self._pending_att.pop(0)
             self._att, self._att_t = att, t
+
+    def _arm_sees(self) -> bool:
+        """Can the wrist lens see the object past the robot? Rays to its
+        centre and four points on its rim; 3 of 5 must reach it first — the
+        rule the mount sweep scored frames by (`moss.ARM_CAMERA_POS`)."""
+        m, d, bid = self.model, self.data, self.can_body
+        cam = np.asarray(d.xpos[self._arm_cam_id], float)
+        c = np.asarray(d.xpos[bid], float)
+        v = c - cam
+        n = float(np.linalg.norm(v))
+        if n < 1e-6:
+            return False
+        v /= n
+        a = np.cross(v, [0.0, 0.0, 1.0])
+        if np.linalg.norm(a) < 1e-6:
+            a = np.cross(v, [1.0, 0.0, 0.0])
+        a /= np.linalg.norm(a)
+        b = np.cross(v, a)
+        r = 0.7 * float(self.prop.radius)
+        hits = 0
+        gid = np.zeros(1, np.int32)
+        for pt in (c, c + r * a, c - r * a, c + r * b, c - r * b):
+            dist = mujoco.mj_ray(m, d, cam, pt - cam, None, 1,
+                                 self._arm_cam_id, gid)
+            if gid[0] < 0 or m.geom_bodyid[gid[0]] == bid or dist >= 0.999:
+                hits += 1
+        return hits >= 3
+
+    def _grip_obs(self) -> tuple[float, float]:
+        """`moss.OBS_GRIP`: (distance of the object from the tool point, 1)
+        from a fresh depth fix, else (`GRIP_UNSEEN_M`, 0)."""
+        if (self._grip is not None
+                and (float(self.data.time) - self._grip_t) < ARM_STALE_S):
+            return float(np.linalg.norm(self._grip)), 1.0
+        return GRIP_UNSEEN_M, 0.0
+
+    def _pose_handover_state(self, hs: dict) -> None:
+        """Put the arm and the object where the yard had them at `creep`:
+        joints and jaw from the state, the object in the base frame, all at
+        rest — then let physics have it."""
+        m, d = self.model, self.data
+        for j, v in zip(list(moss.ARM_JOINTS) + [moss.GRIPPER_JOINT], hs["arm"]):
+            jt = m.joint(j)
+            d.qpos[jt.qposadr[0]] = float(v)
+            d.qvel[jt.dofadr[0]] = 0.0
+            self.arm_cmd[j] = float(v)
+        bx, by, byaw = self.driver.pose(d)
+        c, s_ = math.cos(byaw), math.sin(byaw)
+        x, y, z = hs["pos_b"]
+        d.qpos[self.can_qadr:self.can_qadr + 3] = [bx + x * c - y * s_,
+                                                   by + x * s_ + y * c, z]
+        q = np.zeros(4)
+        mujoco.mju_mulQuat(q, np.array([math.cos(byaw / 2), 0.0, 0.0,
+                                        math.sin(byaw / 2)]),
+                           np.asarray(hs["quat_b"], float))
+        d.qpos[self.can_qadr + 3:self.can_qadr + 7] = q
+        d.qvel[self.can_dadr:self.can_dadr + 6] = 0.0
+        if m.nmocap:
+            d.mocap_pos[0] = [6.0, 6.0, LEAN_KERB_SIZE[2]]
+        self.driver.set_arm(self.arm_cmd)
+        mujoco.mj_forward(m, d)
 
     def _shift_can(self) -> None:
         """Shove the can now and then, so a stale fix goes WRONG and not just
@@ -2280,6 +2405,8 @@ class MossPickEnv(gym.Env):
             top = float(self.data.xpos[self.can_body][2]) + (
                 half * up + self.prop.radius * (1.0 - up))
             o[moss.OBS_SPARE] = top
+        if self.publish_grip:
+            o[list(moss.OBS_GRIP)] = self._grip_obs()
         return o
 
     def _true_attitude(self) -> tuple[float, float, float]:

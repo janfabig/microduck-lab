@@ -856,6 +856,14 @@ class TidyMoss:
         if (fl.get("publish_size") and o[moss.OBS_TARGET_SEEN] > 0
                 and tob.get("top") is not None):
             o[moss.OBS_SPARE] = float(tob["top"])
+        if fl.get("publish_grip"):
+            # the wrist depth camera's grip fix, as `MossPickEnv._grip_obs`
+            # publishes it (`moss.OBS_GRIP`); `read()` already applied the
+            # freshness gate
+            g = tob.get("grip")
+            o[list(moss.OBS_GRIP)] = (
+                (float(np.linalg.norm(g)), 1.0) if g is not None
+                else (ME.GRIP_UNSEEN_M, 0.0))
         #: The last vector actually published to a policy. Kept because the
         #: only way to find a train/deploy gap is to diff this against what
         #: the env hands the same policy at its reset, slot by slot — every

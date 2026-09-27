@@ -57,13 +57,17 @@ class MossTargetSensors:
     _sense_arm = ME.MossPickEnv._sense_arm
     _front_attitude = ME.MossPickEnv._front_attitude
     _true_attitude = ME.MossPickEnv._true_attitude
+    #: the depth camera's 3-D grip fix and its occlusion test — the env's own
+    #: (`_sense_arm` fills `_grip` when `publish_grip` is set)
+    _arm_sees = ME.MossPickEnv._arm_sees
+    publish_grip = True
 
     def __init__(self, model, prefix: str, seed: int = 0):
         self.rng = np.random.default_rng(seed)
-        self._model = model
+        self._model = self.model = model
         self._arm_cam_id = mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_BODY, prefix + moss.ARM_CAMERA_BODY)
-        self._tcp = mujoco.mj_name2id(
+        self._tcp = self.tcp_site = mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_SITE, prefix + "tcp")
         self.data = None
         self.driver = None
@@ -123,17 +127,6 @@ class MossTargetSensors:
             self.can_body, self.prop = bid, g
         before = self._arm_rng_t
         self._sense_arm()
-        if self._arm_rng_t != before and self._unoccluded(bid, g):
-            # A DEPTH camera's fix is a 3-D point, so it says where the object
-            # sits IN THE JAWS — the tool frame — which a range alone cannot:
-            # over 122 yard lifts the range read 120-124 mm (median) whether the
-            # object was deep or at the fingertips (corr -0.1 with grip depth).
-            # Same noise per axis as the range; only when the lens can see the
-            # object past the pads.
-            R = np.asarray(data.site_xmat[self._tcp], float).reshape(3, 3)
-            rel = R.T @ (np.asarray(data.xpos[bid], float) - tcp)
-            self._grip = rel + self.rng.normal(0.0, ME.ARM_DET_RANGE_NOISE, 3)
-            self._grip_t = float(data.time)
         if self._arm_rng_t != before:
             # A depth wrist camera gives the object's 3-D position, so its
             # HEIGHT: sampled with the same detection, the same range noise.
@@ -160,34 +153,6 @@ class MossTargetSensors:
         while self._pending_fatt and self._pending_fatt[0][0] <= t + 1e-9:
             _at, fatt = self._pending_fatt.pop(0)
             self._fatt, self._fatt_t = fatt, t
-
-    def _unoccluded(self, bid: int, g) -> bool:
-        """Can the lens see the object past the robot? Rays to its centre and
-        four points on its rim; 3 of 5 must reach it first — the rule the
-        mount sweep scored frames by (`moss.ARM_CAMERA_POS`)."""
-        m, d = self._model, self.data
-        cam = np.asarray(d.xpos[self._arm_cam_id], float)
-        c = np.asarray(d.xpos[bid], float)
-        v = c - cam
-        n = float(np.linalg.norm(v))
-        if n < 1e-6:
-            return False
-        v /= n
-        a = np.cross(v, [0.0, 0.0, 1.0])
-        if np.linalg.norm(a) < 1e-6:
-            a = np.cross(v, [1.0, 0.0, 0.0])
-        a /= np.linalg.norm(a)
-        b = np.cross(v, a)
-        r = 0.7 * float(g.radius)
-        hits = 0
-        gid = np.zeros(1, np.int32)
-        for pt in (c, c + r * a, c - r * a, c + r * b, c - r * b):
-            vec = pt - cam
-            dist = mujoco.mj_ray(m, d, cam, vec, None, 1,
-                                 self._arm_cam_id, gid)
-            if gid[0] < 0 or m.geom_bodyid[gid[0]] == bid or dist >= 0.999:
-                hits += 1
-        return hits >= 3
 
     def read(self) -> dict:
         """The slots' values, behind the env's own freshness gates: `att` is

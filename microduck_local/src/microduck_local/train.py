@@ -441,6 +441,14 @@ def main() -> None:
             venv.obs_rms.mean[dead] = 0.0
             venv.obs_rms.var[dead] = 1.0
             print(f"donor-dead obs dims passed through: {dead.tolist()}")
+        # ...and a slot whose MEANING this run changes (a body says which):
+        # the donor's statistics there describe something else.
+        _rep = getattr(_body(args.robot), "repurposed_obs_dims", None)
+        _dims = _rep(env_kwargs, prev) if _rep else []
+        if _dims:
+            venv.obs_rms.mean[_dims] = 0.0
+            venv.obs_rms.var[_dims] = 1.0
+            print(f"repurposed obs dims passed through: {_dims}")
         if args.freeze_obs_norm:
             # FREEZE the observation statistics of a warm start.
             #
