@@ -45,6 +45,22 @@ ROBOT_XML = {
 }
 
 
+
+def _prop_contact(pr) -> dict:
+    """A prop's contact: the shape's default friction (condim 6 for anything
+    that rolls — see the ball), a sliding override, and its softness."""
+    from ..physics_contact import contact_softness
+    if pr.shape in ("sphere", "cylinder"):
+        c = {"condim": 6, "friction": [0.5, 0.005, pr.rolling]}
+    else:
+        c = {"priority": 1, "friction": [0.8, 0.005, 0.0001]}
+    if getattr(pr, "friction", None) is not None:
+        c["friction"] = [float(pr.friction)] + c["friction"][1:]
+    soft = contact_softness(getattr(pr, "soft", 0.0))
+    if soft is not None:
+        c["solref"], c["solimp"] = soft
+    return c
+
 def duck_prefix(duck_id: str) -> str:
     return f"{duck_id}/"
 
@@ -610,9 +626,7 @@ def compose(scenario: Scenario) -> mujoco.MjModel:
                           # human watching the lab found this: "I see it
                           # rolling over all the time, and that's when it gets
                           # stuck in the treads."
-                          **({"condim": 6, "friction": [0.5, 0.005, pr.rolling]}
-                             if pr.shape in ("sphere", "cylinder")
-                             else {"priority": 1, "friction": [0.8, 0.005, 0.0001]}))
+                          **_prop_contact(pr))
         else:
             w.add_geom(name=f"{pr.id}_geom", type=gtype, size=gsize,
                        pos=[pr.pos[0], pr.pos[1], z], quat=_yaw_quat(pr.yaw),

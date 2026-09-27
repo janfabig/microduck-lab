@@ -343,6 +343,10 @@ class Prop:
     # the measured roll-out table and why a condim-3 geom ignores it. Only
     # applied when the prop is a SPHERE, the one shape it means anything for.
     rolling: float = 0.002
+    #: sliding friction override (None = the shape's default) and contact
+    #: SOFTNESS 0..1 (`physics_contact`): a cigarette butt is a filter.
+    friction: float | None = None
+    soft: float = 0.0
 
     def radius(self) -> float:
         """The sphere radius the DETECTOR models this prop as."""
@@ -672,6 +676,9 @@ def validate_scenario(raw: dict) -> Scenario:
             _vec(q.get("rgba", list(Prop.rgba)), 4, f"props[{i}].rgba", 0.0, 1.0),
             cls,
             _num(q.get("rolling", Prop.rolling), f"props[{i}].rolling", 0.0, 0.1),
+            (None if q.get("friction") is None else
+             _num(q.get("friction"), f"props[{i}].friction", 0.05, 3.0)),
+            _num(q.get("soft", 0.0), f"props[{i}].soft", 0.0, 1.0),
         ))
     if len(props) > 40:
         raise ScenarioError("more than 40 props")

@@ -95,6 +95,8 @@ class GraspProp:
     condim: int = 3
     priority: int = 1
     friction: tuple[float, float, float] = (0.8, 0.005, 0.0001)
+    #: contact SOFTNESS 0..1 (`physics_contact`; 0 = rigid, as before)
+    soft: float = 0.0
 
     @property
     def radius(self) -> float:
@@ -135,8 +137,12 @@ class GraspProp:
         else:
             body = parent.add_body(name=name, pos=list(pose[0]),
                                    quat=list(pose[1]))
+        from ..physics_contact import contact_softness
+        _soft = contact_softness(self.soft)
         geom = dict(name=f"{name}_geom", mass=self.mass, condim=self.condim,
                     priority=self.priority, friction=list(self.friction),
+                    **({} if _soft is None else
+                       {"solref": _soft[0], "solimp": _soft[1]}),
                     rgba=list(self.rgba))
         if self.shape == "cylinder":
             body.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER,
@@ -697,7 +703,7 @@ def sample_litter(rng, kind: str) -> GraspProp:
                          mass=float(rng.uniform(0.002, 0.006)),
                          jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
                          grasp_height_m=moss.GRASP_HEIGHT_M,
-                         condim=6, friction=(0.7, 0.01, 0.03),
+                         condim=6, friction=(0.9, 0.01, 0.03),
                          rgba=(0.94, 0.93, 0.88, 1.0))
     if kind == "butt":
         # cigarette butt, lying: a BOX (the yard can yaw a prop but not tip
@@ -709,7 +715,7 @@ def sample_litter(rng, kind: str) -> GraspProp:
                          mass=float(rng.uniform(0.0003, 0.0008)),
                          jaw_ctrl_m=moss.GRASP_JAW_CTRL_M,
                          grasp_height_m=moss.GRASP_HEIGHT_M,
-                         condim=4, friction=(0.8, 0.005, 0.0001),
+                         condim=4, friction=(1.2, 0.005, 0.0001),
                          rgba=(0.95, 0.72, 0.42, 1.0))
     # bottle cap
     return GraspProp(id="cap", shape="cylinder",
