@@ -32,13 +32,17 @@ import numpy as np
 
 from . import moss
 
-#: The arm pose the bin is looked at from. Found by a search over 6000 arm
-#: poses (whole bin floor in the arm camera's field, every line of sight
-#: clearing the rim, arm touching nothing, near the post-delivery pose):
-#: 18 qualified; refined, this one keeps a full view in 100% of poses
-#: perturbed by 0.05 rad on every joint. Mostly a wrist tilt from where a
-#: delivery leaves the arm (wrist_flex 1.56 -> 0.37).
-BIN_LOOK_POSE = (-1.577, -1.033, 0.017, 0.37, -0.43)
+#: The arm pose the bin is looked at from. RE-SEARCHED 2026-09-27 for the
+#: side mount (`moss.ARM_CAMERA_POS`): the first look pose, (-1.577, -1.033,
+#: 0.017, 0.37, -0.43), was found for a lens that sat past the jaw tips and
+#: looked back up the approach, and from the real mount it sees 0% of the bin.
+#: The side lens looks ALONG the jaws, so the look now points them into the
+#: bin from above and rolls the camera round to it. Search: 60,000 poses near
+#: the post-delivery pose, 0.10 rad clear of every joint limit, arm touching
+#: nothing, lines of sight clearing the rim. None sees the WHOLE floor (that
+#: needs wrist_flex on its stop); this one sees 94% of a 6 x 6 floor grid and
+#: keeps >= 90% with no contact under 0.05 rad perturbation on every joint.
+BIN_LOOK_POSE = (-1.776, -1.195, 0.559, 1.507, 2.338)
 #: sd of a detected item's position, m. Of the order of the arm camera's own
 #: range noise at 0.3 m.
 DETECT_POS_SD = 0.010

@@ -778,30 +778,51 @@ CAMERA_RATE_HZ = 10.0
 # the correlation between the can's axis and `wrist_roll` is -0.030 and the
 # wrist travels 3.2 degrees — the jaw never turns to meet a perpendicular
 # can, which is what a human watching the lab reported.
-#: OURS: on the gripper frame, behind and above the jaws, looking along the
-#: approach. A wrist camera that sits AT the jaws is occluded by the object
-#: at exactly the moment it matters.
+#: OURS: on the SIDE of the gripper housing, at its back edge, looking down
+#: the approach past the housing's corner. A wrist camera that sits AT the
+#: jaws is occluded by the object at exactly the moment it matters.
 ARM_CAMERA_BODY = "moss_arm_camera"
-#: SWEPT, not guessed — and then deliberately not taken to its optimum. The
-#: first pose here was (-0.035, 0, 0.045) at 0.35 rad and it saw the can in
-#: only 37% of the frames inside 10 cm of a grasp, which is the band where
-#: the attitude estimate has to be right. Scoring 919 real grasp frames over
-#: a grid of mounts:
+#: **The gripper frame's +z is the APPROACH, not "up".** MEASURED 2026-09-27
+#: over GRASP, LIFT, DROP, TUCK_POSE_V04 and the home pose: the tool point sits
+#: at (-0.008, 0, -0.014) in `gripper_frame_link` in every one, the fingers
+#: reach z +0.005, and the housing the jaws come out of spans z -0.098..-0.042
+#: and about 12 x 12 cm across (x -0.070..+0.054, y -0.058..+0.059). The
+#: jaws slide along the 41 deg / 221 deg diagonal of the frame's x-y plane.
 #:
-#:     back  up    pitch   in frame
-#:     0.035 0.045  0.35     37%   <- the first guess
-#:     0.060 0.065  0.90     60%   <- taken
-#:     0.120 0.120  0.70     81%   <- refused
+#: The first mount, (-0.060, 0, +0.065) pitched 0.90 rad about +y, was read in
+#: the opposite convention (+x the approach, +z above the jaws): it put the
+#: lens 6.5 cm PAST the jaw tips, under the floor in 32% of the frames inside
+#: 10 cm of a grasp (world z -0.029 m at GRASP_POSE), looking UP at the tool
+#: point. The detector ignores occlusion, so every wrist reading before this
+#: came from a lens no bracket could hold — and the mount sweep that picked it
+#: searched only the half-space past the jaws.
 #:
-#: The sweep keeps improving as the camera moves back and up, because a
-#: wider standoff sees more — but 12 cm behind and above the gripper frame
-#: is a bracket, not a wrist mount, and it would foul on the bin rim and the
-#: furniture the arm reaches past. 6 cm is what the SO-101's own wrist
-#: mounts occupy, so that is the envelope and 60% is what it buys.
-ARM_CAMERA_POS: tuple[float, float, float] = (-0.060, 0.0, 0.065)
-#: OURS: pitched down the approach axis. The gripper frame's +x is the
-#: direction the jaws open toward, which is the convention `Detector` reads.
-ARM_CAMERA_PITCH_RAD = 0.90
+#: RE-SWEPT with occlusion (1,564 frames of the 478dad pick, in its eval env
+#: and its trained settings; a frame counts when the object's centre is in the
+#: 70 x 55 field AND 3 of 5 points on it are not hidden by the robot's own
+#: visual meshes or the floor), within 10 cm of a grasp:
+#:
+#:     mount                                   seen   housing  forearm
+#:     old, past the jaws                       61%      --     (under floor 32%)
+#:     on the jaw-travel diagonal (45/225)   27-46%
+#:     behind the housing corner, z -0.13       85%    3.2 cm   0.5 cm  <- fouls
+#:     side face, back edge (THIS)              88%    2.2 cm   2.1 cm
+#:
+#: A plateau, not a peak: 88-90% anywhere from 290 to 340 deg round the axis,
+#: 8.5-9.5 cm out, z -0.09..-0.11, aimed 8-15 cm ahead of the housing — so
+#: a real bracket a centimetre off still sees the grasp. Taken off the jaw-
+#: travel diagonal (the fingers block that side) and 2 cm clear of the housing
+#: box and of the forearm/wrist meshes over the WHOLE wrist_flex x wrist_roll
+#: range (the stow passes flex 1.55; the corner behind the housing came within
+#: 0.5 cm there). Over all 3,127 frames it sees 89% inside 10 cm and 94%
+#: inside 5 cm. At GRASP_POSE the lens is 13.6 cm off the floor and the tool
+#: point 26 deg off its axis, 12 cm away.
+ARM_CAMERA_POS: tuple[float, float, float] = (0.021, -0.080, -0.100)
+#: Where the optical axis points: a spot on the approach axis 15 cm past the
+#: gripper frame, so the axis crosses under the jaws at a 19 deg toe-in. The
+#: image's up is AWAY from the approach axis, so the jaws sit at the bottom
+#: edge of the picture, as on any side-mounted wrist camera.
+ARM_CAMERA_AIM: tuple[float, float, float] = (-0.008, 0.0, 0.150)
 #: **The SO-101's own default wrist camera**, which is what this arm is
 #: derived from. `TheRobotStudio/SO-ARM100` ships six wrist mounts — a
 #: 32x32 UVC module (hex-nut, integrated and plug-on variants), a RealSense
@@ -1341,8 +1362,21 @@ def add_arm_camera(spec: mujoco.MjSpec) -> None:
     cam = grip.add_body()
     cam.name = ARM_CAMERA_BODY
     cam.pos = list(ARM_CAMERA_POS)
-    half = 0.5 * ARM_CAMERA_PITCH_RAD
-    cam.quat = [math.cos(half), 0.0, math.sin(half), 0.0]
+    cam.quat = list(arm_camera_quat())
+
+
+def arm_camera_quat() -> np.ndarray:
+    """The wrist camera's orientation in the gripper frame: x at
+    `ARM_CAMERA_AIM`, z (image up) pointing away from the approach axis."""
+    p, aim = np.asarray(ARM_CAMERA_POS, float), np.asarray(ARM_CAMERA_AIM, float)
+    x = aim - p
+    x /= np.linalg.norm(x)
+    out = np.array([p[0] - aim[0], p[1] - aim[1], 0.0])
+    z = out - x * (out @ x)
+    z /= np.linalg.norm(z)
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.column_stack([x, np.cross(z, x), z]).ravel())
+    return q
 
 
 def add_camera(spec: mujoco.MjSpec) -> None:

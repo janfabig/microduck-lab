@@ -409,6 +409,35 @@ def test_the_camera_is_a_massless_frame_up_front():
         "the camera frame changed the robot's mass — it must be a frame")
 
 
+def test_the_wrist_camera_sits_where_a_bracket_can_hold_it():
+    """The gripper frame's +z is the APPROACH (the tool point is at z -0.014,
+    the housing at z -0.098..-0.042). The first mount read it as "up" and put
+    the lens 6.5 cm past the jaw tips — under the floor at GRASP_POSE, looking
+    up at the tool point. Pinned in the frame's own terms, at every pose the
+    arm is sent to: the lens is BEHIND the tool point along the approach,
+    outside the housing, off the floor, and the tool point is in its field."""
+    m = moss.model()
+    d = mujoco.MjData(m)
+    g, cam = m.body(moss.GRIPPER_FRAME_BODY).id, m.body(moss.ARM_CAMERA_BODY).id
+    tcp = m.site("tcp").id
+    for pose in (moss.GRASP_POSE, moss.LIFT_POSE, moss.DROP_POSE, moss.TUCK_POSE_V04):
+        mujoco.mj_resetData(m, d)
+        for j, q in zip(moss.ARM_JOINTS, pose):
+            d.qpos[m.joint(j).qposadr[0]] = q
+        mujoco.mj_forward(m, d)
+        Rg = d.xmat[g].reshape(3, 3)
+        lens = Rg.T @ (d.xpos[cam] - d.xpos[g])
+        tool = Rg.T @ (d.site_xpos[tcp] - d.xpos[g])
+        assert lens[2] < tool[2] - 0.05, ("lens is not behind the jaws", lens, tool)
+        assert math.hypot(lens[0] - tool[0], lens[1]) > 0.075, "lens inside the housing"
+        assert d.xpos[cam][2] > 0.05, ("lens at the floor", pose, d.xpos[cam])
+        v = d.xmat[cam].reshape(3, 3).T @ (d.site_xpos[tcp] - d.xpos[cam])
+        assert v[0] > 0
+        assert abs(math.degrees(math.atan2(v[1], v[0]))) <= moss.ARM_CAMERA_HFOV_DEG / 2
+        assert abs(math.degrees(math.atan2(v[2], math.hypot(v[0], v[1])))) \
+            <= moss.ARM_CAMERA_VFOV_DEG / 2
+
+
 def test_it_sees_the_cans_in_its_own_yard():
     """The detector on that frame finds every object in the yard, driving a lap.
 
