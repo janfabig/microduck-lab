@@ -268,3 +268,18 @@ in the lift, 3 in the stow, 3 kept. Most handovers were at 0.40-0.54 m (not clos
 * Untested suspect for the lift: in the env the POLICY lifts (success = held 8 cm up); in
   the yard the brain takes over at the grip and runs a scripted joint-space ramp to
   LIFT_POSE. The replay's env success is the policy's own lift.
+* LETTING THE POLICY LIFT (`policy_lift_m` 0.08, max 2 s after the grip; patch in scratch):
+  the wrist depth camera's z does not update while the object is in the jaws, so it ran on
+  the 2 s clock, and in 2 s the policy lifts to 30-36 cm by itself. 24 seeds: 68 v 71 in
+  bin (paired -0.12 +- 0.19). Carries reaching the scripted lift fell 141 -> 98 and kept
+  better (lift losses 39 -> 21): the shallow grips now fall out during the POLICY's lift.
+  Who lifts does not matter; the losses moved upstream. Removed.
+  Open: the replay's env "picked 17/23" is the env's success over a whole 8 s episode, which
+  allows a drop and a re-grasp; the yard aborts on the first drop. That, not the lift, may be
+  the difference the replay saw.
+  Checked: NOT re-grasping — of the 17 env picks from shallow-yard states, 15 came on the
+  first contact, none after a lift-and-drop. NOT the contact softness — the same 23 states
+  with the yard's soft contact: 16/23 picked. What is left is the pick's EXECUTION: from the
+  same state the env's policy lifts the object and the yard's (with `policy_lift_m`) drops
+  it, so the observation or the stepping during the pick differs. Next instrument: step the
+  yard and the replayed env side by side from one snapshot and diff the 32 slots per tick.
