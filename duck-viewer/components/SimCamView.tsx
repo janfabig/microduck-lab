@@ -1,0 +1,273 @@
+"use client";
+
+// WHAT THE CAMERAS CAN SEE, drawn in the room (/sim, under the sensors
+// toggle T). Asked on /sim 2026-09-28: "how come the depth sensor can't see
+// that small cylinder far away — is it too small? are we sure it's working?"
+// The answer was in the detector's geometry and nowhere on the page, so this
+// draws it:
+//
+//   * the head camera's field of view on the floor: its two side edges, and
+//     the near edge where the bottom of the frame meets the floor (nothing
+//     nearer than that is in the picture at all)
+//   * a ring on every object, coloured by WHY it is or is not a detection
+//     (`sensors/detector.Detector.explain`, sent as `det.why`):
+//       green   seen — big enough to be found on every frame
+//       amber   sometimes — the size ramp; the label says how often
+//       red     too small — in view and unblocked, but under the detector's
+//               smallest box at this range
+//       violet  blocked — in view but something is in the way
+//       grey    out of view / beyond range (no label, to keep it quiet)
+//     with a sight line from the lens to each one it can see
+//   * the WRIST camera's cone out to its depth range (MOSS: 0.6 m)
+//
+// One robot at a time: the selected one, or the only one in the room.
+// Per-frame painting follows the page's rule — no React state per frame: one
+// LineSegments rewritten in place, and a fixed pool of labels moved by ref.
+
+import { useEffect, useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
+import * as THREE from "three";
+
+import type { Scene } from "@/lib/lab";
+import { getSelectedDuck } from "@/lib/select";
+import { OVERLAY_LAYER, quatRotate, type DetPayload, type SimClient } from "@/lib/sim";
+
+/** `[name, why, p, x, y, z, radius]` (world_server._explain_cached). */
+type WhyRow = [string, string, number, number, number, number, number];
+type CamDet = DetPayload & { why?: WhyRow[]; wrist?: { fov: [number, number]; range: number } };
+
+const COLORS: Record<string, string> = {
+  seen: "#3ecf6e",
+  marginal: "#f2b632",
+  small: "#e5534b",
+  blocked: "#a47ee0",
+  outside: "#8b949e",
+  far: "#8b949e",
+};
+const WEDGE = "#43c2b8";
+const WRIST = "#5fb3e8";
+/** How far the floor wedge is drawn, m — the room, not the 6 m spec range. */
+const WEDGE_M = 3.0;
+const FLOOR_Z = 0.004;
+const MAX_SEG = 1200;
+const MAX_LABELS = 24;
+/** The body a wrist camera is mounted on (robots/moss.py ARM_CAMERA_BODY); its
+ *  x axis is the optical axis. The field and range come in `det.wrist`. */
+const WRIST_BODY = "moss_arm_camera";
+/** The filled floor wedge: K strips between the near edge and WEDGE_M. */
+const WEDGE_K = 12;
+
+/** A readable reason for a row; null = draw the ring only. */
+export function whyLabel(row: WhyRow, dist: number): string | null {
+  const [name, why, p] = row;
+  const d = `${dist.toFixed(1)} m`;
+  switch (why) {
+    case "seen": return `${name} · seen · ${d}`;
+    case "marginal": return `${name} · ${Math.round(p * 100)}% of frames · ${d}`;
+    case "small": return `${name} · too small at ${d}`;
+    case "blocked": return `${name} · blocked · ${d}`;
+    default: return null;
+  }
+}
+
+/** A camera-frame direction (x forward, y left, z up) at this bearing
+ *  (+left) and elevation (+up), through the pinhole. */
+function camDir(q: number[], bearing: number, elev: number): [number, number, number] {
+  const v: [number, number, number] = [1, Math.tan(bearing), Math.tan(elev)];
+  const n = Math.hypot(v[0], v[1], v[2]);
+  return quatRotate(q, [v[0] / n, v[1] / n, v[2] / n]);
+}
+
+export function CamOverlay({
+  client,
+  robotScenes,
+  enabled,
+}: {
+  client: SimClient;
+  robotScenes: Record<string, Scene>;
+  enabled: boolean;
+}) {
+  const lines = useRef<THREE.LineSegments>(null);
+  useEffect(() => {
+    lines.current?.layers.set(OVERLAY_LAYER);
+    fill.current?.layers.set(OVERLAY_LAYER);
+    rings.current?.layers.set(OVERLAY_LAYER);
+  }, []);
+  const wristIdx = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [id, sc] of Object.entries(robotScenes)) out[id] = sc.bodies.indexOf(WRIST_BODY);
+    return out;
+  }, [robotScenes]);
+  const pos = useMemo(() => new Float32Array(MAX_SEG * 2 * 3), []);
+  const colors = useMemo(() => new Float32Array(MAX_SEG * 2 * 3), []);
+  const col = useMemo(() => new THREE.Color(), []);
+  const fill = useRef<THREE.Mesh>(null);
+  const rings = useRef<THREE.InstancedMesh>(null);
+  const mtx = useMemo(() => new THREE.Matrix4(), []);
+  const fillPos = useMemo(() => new Float32Array(WEDGE_K * 6 * 3), []);
+  const groups = useRef<(THREE.Group | null)[]>([]);
+  const tags = useRef<(HTMLDivElement | null)[]>([]);
+
+  useFrame(() => {
+    const ls = lines.current;
+    if (!ls) return;
+    const f = client.frame;
+    let n = 0;
+    let nl = 0;
+    let nf = 0;
+    let nr = 0;
+    const seg = (a: number[], b: number[], c: string) => {
+      if (n >= MAX_SEG) return;
+      const k = n * 6;
+      pos[k] = a[0]; pos[k + 1] = a[1]; pos[k + 2] = a[2];
+      pos[k + 3] = b[0]; pos[k + 4] = b[1]; pos[k + 5] = b[2];
+      col.set(c);
+      col.toArray(colors, k);
+      col.toArray(colors, k + 3);
+      n++;
+    };
+    // A solid flat ring on the floor: a 1 px line ring vanished on the wood.
+    const ring = (x: number, y: number, r: number, c: string) => {
+      const im = rings.current;
+      if (!im || nr >= MAX_LABELS * 2) return;
+      mtx.makeScale(r, r, 1).setPosition(x, y, FLOOR_Z + 0.001);
+      im.setMatrixAt(nr, mtx);
+      col.set(c);
+      im.setColorAt(nr, col);
+      nr++;
+    };
+    if (f && enabled) {
+      const sel = getSelectedDuck();
+      const ducks = f.ducks.filter((d) => (sel ? d.id === sel : f.ducks.length === 1));
+      for (const d of ducks) {
+        const det = d.sensors?.det as CamDet | undefined;
+        if (!det?.why || !det.cam || det.cam.length < 7) continue;
+        const o = det.cam.slice(0, 3);
+        const q = det.cam.slice(3, 7);
+        const [fh, fv] = (det.fov ?? [60, 45]).map((v) => (v * Math.PI) / 360);
+        // The view on the floor: where the frame's bottom edge lands, and the
+        // two side edges from there out to WEDGE_M.
+        let prevNear: number[] | null = null;
+        let prevFar: number[] | null = null;
+        const K = WEDGE_K;
+        for (let i = 0; i <= K; i++) {
+          const b = -fh + (2 * fh * i) / K;
+          const dir = camDir(q, b, -fv);
+          if (dir[2] >= -1e-6) { prevNear = null; continue; }
+          const t = (FLOOR_Z - o[2]) / dir[2];
+          const p = [o[0] + dir[0] * t, o[1] + dir[1] * t, FLOOR_Z];
+          const h = Math.hypot(dir[0], dir[1]);
+          const far = [o[0] + (dir[0] / h) * WEDGE_M, o[1] + (dir[1] / h) * WEDGE_M, FLOOR_Z - 0.001];
+          if (prevNear) seg(prevNear, p, WEDGE);
+          if (prevNear && prevFar && nf < WEDGE_K) {
+            const quad = [prevNear, p, far, prevNear, far, prevFar];
+            quad.forEach((v, j) => fillPos.set([v[0], v[1], FLOOR_Z - 0.001], (nf * 6 + j) * 3));
+            nf++;
+          }
+          prevNear = p;
+          prevFar = far;
+          if (i === 0 || i === K) seg(p, far, WEDGE);
+        }
+        // Every object, ringed by why; a sight line and a label where it matters.
+        for (const row of det.why) {
+          const [, why, , x, y, z, r] = row;
+          const c = COLORS[why] ?? COLORS.outside;
+          ring(x, y, Math.max(r * 1.5, 0.045), c);
+          if (why === "seen" || why === "marginal") seg(o, [x, y, z], c);
+          const text = whyLabel(row, Math.hypot(x - o[0], y - o[1]));
+          if (text && nl < MAX_LABELS) {
+            const g = groups.current[nl];
+            const tag = tags.current[nl];
+            if (g && tag) {
+              g.position.set(x, y, z + Math.max(r, 0.02) + 0.05);
+              g.visible = true;
+              if (tag.style.display) tag.style.display = "";
+              if (tag.textContent !== text) tag.textContent = text;
+              tag.style.borderColor = c;
+              tag.style.color = c;
+            }
+            nl++;
+          }
+        }
+        // The wrist camera's cone, out to its depth range.
+        const wi = d.robot ? wristIdx[d.robot] ?? -1 : -1;
+        const wb = wi >= 0 ? d.bodies[wi] : undefined;
+        if (wb && det.wrist) {
+          const wo = [wb[0], wb[1], wb[2]];
+          const wq = [wb[3], wb[4], wb[5], wb[6]];
+          const [wh, wv] = det.wrist.fov.map((v) => (v * Math.PI) / 360);
+          const R = det.wrist.range;
+          const corners = [[wh, wv], [-wh, wv], [-wh, -wv], [wh, -wv]].map(([b, e]) => {
+            const dir = camDir(wq, b, e);
+            return [wo[0] + dir[0] * R, wo[1] + dir[1] * R, wo[2] + dir[2] * R];
+          });
+          corners.forEach((p, i) => {
+            seg(wo, p, WRIST);
+            seg(p, corners[(i + 1) % 4], WRIST);
+          });
+        }
+      }
+    }
+    for (let i = nl; i < MAX_LABELS; i++) {
+      const g = groups.current[i];
+      if (g && g.visible) g.visible = false;
+      const tag = tags.current[i];
+      if (tag && tag.style.display !== "none") tag.style.display = "none";
+    }
+    (ls.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    (ls.geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
+    ls.geometry.setDrawRange(0, n * 2);
+    const im = rings.current;
+    if (im) {
+      im.count = nr;
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    }
+    const fm = fill.current;
+    if (fm) {
+      (fm.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+      fm.geometry.setDrawRange(0, nf * 6);
+    }
+  });
+
+  return (
+    <>
+      <lineSegments ref={lines} frustumCulled={false}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[pos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[colors, 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial vertexColors transparent opacity={0.95} />
+      </lineSegments>
+      <instancedMesh ref={rings} args={[undefined, undefined, MAX_LABELS * 2]} frustumCulled={false} renderOrder={2}>
+        <ringGeometry args={[0.72, 1, 28]} />
+        <meshBasicMaterial transparent opacity={0.9} depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
+      </instancedMesh>
+      <mesh ref={fill} frustumCulled={false} renderOrder={1}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[fillPos, 3]} />
+        </bufferGeometry>
+        <meshBasicMaterial color={WEDGE} transparent opacity={0.1} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      {Array.from({ length: MAX_LABELS }, (_, i) => (
+        <group key={i} ref={(g) => { groups.current[i] = g; }} visible={false}>
+          <Html center zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
+            <div
+              ref={(el) => { tags.current[i] = el; }}
+              style={{
+                display: "none",
+                font: "10px ui-monospace, Menlo, monospace",
+                whiteSpace: "nowrap",
+                padding: "1px 5px",
+                border: "1px solid",
+                borderRadius: 3,
+                background: "rgba(16,18,22,0.78)",
+              }}
+            />
+          </Html>
+        </group>
+      ))}
+    </>
+  );
+}

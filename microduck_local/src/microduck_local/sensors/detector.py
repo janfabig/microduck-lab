@@ -854,6 +854,70 @@ class Detector:
         others = [c for c in TEAM_COLORWAYS if c != tgt.color]
         return str(self.rng.choice(others)) if others else None
 
+    # -- explanation -------------------------------------------------------
+    def explain(self, data: mujoco.MjData) -> list[dict]:
+        """WHY each target is or is not a detection right now, for the /sim
+        camera overlay — the question "why can't it see that cap?" answered
+        by the same geometry `measure` uses, without its noise.
+
+        One entry per target (own body excluded): its world centre and
+        radius, and `why`:
+
+          seen      big enough to be found on every frame (before `miss_p`)
+          marginal  found on a fraction `p` of frames — the size ramp between
+                    `w_none` and `w_full`, times any partial visibility
+          small     in view and unblocked, but narrower than `w_none`: never
+          blocked   centre in the frustum, but occluded or cut off
+          outside   not in the field of view
+          far       beyond `max_range_m`
+
+        Deterministic: ray casts and angles only, no draws from `self.rng`,
+        so calling it does not change what the robot detects.
+        """
+        s = self.spec
+        origin, R = self.lens(data)
+        R2 = None
+        if s.bottom_pitch_deg > 0.0:
+            th = np.deg2rad(s.bottom_pitch_deg)
+            c, sn = float(np.cos(th)), float(np.sin(th))
+            R2 = R @ np.array([[c, 0.0, sn], [0.0, 1.0, 0.0], [-sn, 0.0, c]])
+        half_h = np.deg2rad(s.fov_h_deg) / 2
+        half_v = np.deg2rad(s.fov_v_deg) / 2
+        out: list[dict] = []
+        for tgt in self.targets:
+            if tgt.body >= 0 and int(self.model.body_rootid[tgt.body]) == self.own_root:
+                continue
+            pos = (np.asarray(tgt.pos, dtype=np.float64) if tgt.pos is not None
+                   else np.asarray(data.xpos[tgt.body], dtype=np.float64))
+            e = {"name": tgt.name, "cls": tgt.cls,
+                 "xyz": [round(float(v), 4) for v in pos],
+                 "r": round(float(tgt.radius), 4)}
+            vis = self._visible(data, tgt, origin, R)
+            if vis is None and R2 is not None:
+                vis = self._visible(data, tgt, origin, R, R_frustum=R2)
+            if vis is not None:
+                width, seen_frac = vis[2], vis[4]
+                p_find = float(np.clip((width - s.w_none) / (s.w_full - s.w_none), 0.0, 1.0))
+                p_find *= min(seen_frac / s.seen_full, 1.0) if s.seen_full > 0 else 1.0
+                e["p"] = round(p_find, 3)
+                e["why"] = ("seen" if p_find >= 0.999 else
+                            "small" if p_find <= 0.0 else "marginal")
+            else:
+                d = pos - origin
+                rng = float(np.linalg.norm(d))
+                inview = False
+                for Rf in ((R,) if R2 is None else (R, R2)):
+                    loc = Rf.T @ d
+                    if loc[0] > 0:
+                        b = float(np.arctan2(loc[1], loc[0]))
+                        el = float(np.arctan2(loc[2], np.hypot(loc[0], loc[1])))
+                        inview |= abs(b) < half_h and abs(el) < half_v
+                e["why"] = ("far" if rng > s.max_range_m else
+                            "blocked" if inview else "outside")
+                e["p"] = 0.0
+            out.append(e)
+        return out
+
     # -- measurement -------------------------------------------------------
     def lens(self, data: mujoco.MjData) -> tuple[np.ndarray, np.ndarray]:
         """(origin, rotation) of the mount frame — the site's, or the body's

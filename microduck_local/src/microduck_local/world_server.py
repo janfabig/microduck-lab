@@ -1103,7 +1103,32 @@ def tof_payload(w: World, d) -> dict | None:
                       # draws — the same body the detector refuses to detect.
                       "selfBody": getattr(d, "camera_housing_body", _no_housing)(),
                       "items": [x.as_payload() for x in f.detections]}
+        # WHY each object is or is not seen (`Detector.explain`), for the /sim
+        # camera overlay. Once per camera frame, not per stream frame: it
+        # casts rays. Not on a DUCK: a pitch of six ducks would carry six
+        # rosters of rows every frame for an overlay drawn for the arm bodies,
+        # and a duck's frame is pinned field for field (test_world_server).
+        if getattr(d, "robot", DUCK_ROBOT) != DUCK_ROBOT:
+            out["det"]["why"] = _explain_cached(w, d.detector, f.t)
+        arm_det = (getattr(d, "sensors", None) or {}).get("arm_detector")
+        if arm_det is not None:
+            out["det"]["wrist"] = {"fov": [arm_det.spec.fov_h_deg, arm_det.spec.fov_v_deg],
+                                   "range": arm_det.spec.max_range_m}
     return out or None
+
+
+def _explain_cached(w, det, t: float) -> list[dict]:
+    """`det.explain` for the frame captured at `t`, computed once, as
+    rows `[name, why, p, x, y, z, radius]`."""
+    cache = getattr(det, "_why_cache", None)
+    if cache is None or cache[0] != t:
+        # Compact rows, [name, why, p, x, y, z, radius]: a room's worth of
+        # dicts was 1.1 kB on EVERY stream frame.
+        cache = (t, [[e["name"], e["why"], e["p"],
+                      *(round(v, 3) for v in e["xyz"]), e["r"]]
+                     for e in det.explain(w.data)])
+        det._why_cache = cache
+    return cache[1]
 
 
 # -- requests --------------------------------------------------------------------

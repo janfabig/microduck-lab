@@ -72,6 +72,7 @@ import { camAspect, renderInset } from "@/lib/inset";
 import { buildBodyGeometries, Duck, type BodyGeometry } from "./Duck";
 import { RobotBody } from "./SimStage";
 import { ArmBlock, GripperBlock, LidarOverlay, LidarPlot } from "./SimLidar";
+import { CamOverlay } from "./SimCamView";
 import { isDuck, robotCount, robotLook } from "@/lib/robots";
 import CameraKeys from "./CameraKeys";
 import { useTruckSwipe } from "./useTruckSwipe";
@@ -1783,6 +1784,8 @@ export default function SimViewer() {
           {/* …and the same toggle draws the planar scan for a body that has
               one instead of a ToF (components/SimLidar.tsx). */}
           {client && <LidarOverlay client={client} robotScenes={robotScenes} enabled={showTof} />}
+          {/* …and what the cameras can and cannot see, and why (components/SimCamView.tsx). */}
+          {client && <CamOverlay client={client} robotScenes={robotScenes} enabled={showTof} />}
           {scene && client && <DetOverlay scene={scene} client={client} enabled={showTof} />}
           {client && <ChaseOverlay client={client} enabled={showTof} />}
           {client && <MapOverlay client={client} duckId={selected} enabled={showMap} />}
