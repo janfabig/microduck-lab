@@ -509,6 +509,35 @@ class TidyMossParams:
     #: 10-14 rad/s when it slips free — learned fold and scripted alike. The
     #: fold trained under exactly this value (`moss_env.CMD_LEASH_RAD`).
     fold_leash_rad: float = 0.08
+    #: THE FOLD ROUTE (2026-09-28). The learned fold runs at its 0.75 rad/s
+    #: command cap the WHOLE way (7.8 s on every delivery in the yard, 29% of
+    #: a 300 s run spent in `tuck`) — it is not slow, its route is long: it
+    #: was paid to pass `moss.RETRACT_WAYPOINT`, 3.0 rad out and 3.2 rad
+    #: back, from a release pose 2.0 rad from home. That waypoint was chosen
+    #: to connect 14 DIFFERENT delivery poses; this brain releases from one
+    #: (`fold_route_from`, 12 of 15 folds in four yard runs). A planner over
+    #: the robot's own collision model found a waypoint from THAT pose whose
+    #: route costs 2.0 rad of the slowest joint (the roll), 2.7 s at the same
+    #: cap. Flown here as a straight, rate-capped, leashed script — the drop
+    #: path's motion — when the arm starts within `fold_route_from_tol` of
+    #: the release pose; any other start still gets the learned fold.
+    #: MEASURED, moss-yard, 96 seeds: 876 v 848 in the bin (+0.29 +- 0.16),
+    #: the fold 7.8 -> 2.5 s, 0 bin contacts on the route; at 1.2 rad/s
+    #: +0.15 +- 0.15 and more contact, so the cap stays at 0.75. With
+    #: `missed_pick_straight` 893 v 848 (+0.47 +- 0.15, halves +0.46/+0.48).
+    fold_route: bool = True
+    fold_route_from: tuple[float, ...] = (-1.875, -0.695, -0.264, 1.438, -0.05)
+    fold_route_wp: tuple[float, ...] = (-0.5735, -1.138, 0.8424, 0.7053, 1.267)
+    fold_route_from_tol: float = 0.25
+    fold_route_rate: float = 0.75
+    #: A MISSED PICK GOES STRAIGHT HOME, by the drop path. The learned fold
+    #: trained from over-the-bin starts only; handed an arm out in FRONT (a
+    #: creep or pinch that timed out) it swings back over the bin and scrapes
+    #: it — 7 of 15 such folds in six yard runs, for up to the 12 s budget,
+    #: against 0 of 107 folds from the release pose. With `fold_route`, 96
+    #: yard seeds: 893 v 876 (+0.18 +- 0.10). Straight home still brushes the
+    #: hull (~26 ticks a fold) — a planned route from the front is next.
+    missed_pick_straight: bool = True
     #: A detection older than this is not a fix any more.
     stale_s: float = 1.0
     #: Only cans IN FRONT are targets: a bearing past this is something the
@@ -697,6 +726,9 @@ class TidyMoss:
         self._fold_seeded = False
         self._dropped = False
         self._drop_from: dict[str, float] | None = None
+        #: The scripted fold's route (poses), seeded on its first tick.
+        self._route: list | None = None
+        self._route_tried = False
         self._carry_jaw: float | None = None
         self._fix_size: float | None = None
         self._kin = None
@@ -953,6 +985,7 @@ class TidyMoss:
             if self._attempts >= p.max_retries:
                 self._give_up(t)
             self._to("tuck", t)
+            self._dropped = self.p.missed_pick_straight
             return None, "pinch: missed"
         if ph == "rise":
             a = dt / p.pinch_move_s
@@ -969,6 +1002,7 @@ class TidyMoss:
             if self._attempts >= p.max_retries:
                 self._give_up(t)
             self._to("tuck", t)
+            self._dropped = self.p.missed_pick_straight
             return None, "pinch: dropped it rising"
         return None, "pinch"
 
@@ -1414,6 +1448,21 @@ class TidyMoss:
         return Intent(twist=(0.0, 0.0, 0.0), arm=None,
                       note=f"{where}: dropped it — going back for it")
 
+    def _fold_route(self, senses: Senses):
+        """The scripted fold's route if this fold starts from the release
+        pose it was planned for, else None (seeded once per tuck)."""
+        if not self._route_tried:
+            self._route_tried = True
+            arm = senses.arm or {}
+            if (self.p.fold_route and not self._dropped
+                    and all(j in arm for j in moss.ARM_JOINTS)):
+                q0 = [float(arm[j]) for j in moss.ARM_JOINTS]
+                if max(abs(a - b) for a, b in zip(q0, self.p.fold_route_from)
+                       ) < self.p.fold_route_from_tol:
+                    self._route = [q0, list(self.p.fold_route_wp),
+                                   list(moss.tuck_pose())]
+        return self._route
+
     def _folded(self, senses: Senses) -> bool:
         """Is the arm home — within the fold's own tolerance of the tuck on
         every joint that shapes the arm (`moss_env.RETRACT_JOINTS`)?"""
@@ -1438,6 +1487,7 @@ class TidyMoss:
         self._low_since = None
         self.state, self._t0 = state, t
         self._fold_seeded = False
+        self._route, self._route_tried = None, False
         # A new state ramps from where the arm IS now, not from the last
         # state's starting pose. Cleared here so `_ramp_from_here` snapshots
         # again on its first tick.
@@ -1561,6 +1611,7 @@ class TidyMoss:
                 if self._attempts >= p.max_retries:
                     self._give_up(t)
                 self._to("tuck", t)
+                self._dropped = self.p.missed_pick_straight
             elif (self._gripped(senses) and self._grip_held_for(senses)
                   and self._grip_is_a_grasp(senses)
                   and self._grip_is_deep(senses)
@@ -1600,6 +1651,7 @@ class TidyMoss:
                     self._give_up(t)
                     note = "gave up on this one"
                 self._to("tuck", t)
+                self._dropped = self.p.missed_pick_straight
             else:
                 x, y = fix
                 self._target_world = self._world((x, y)) or self._target_world
@@ -1814,6 +1866,33 @@ class TidyMoss:
             if self._folded(senses) or since >= p.drop_tuck_max_s:
                 self._dropped = False
                 self._drop_from = None
+                self._to("search", t)
+
+        elif self.state == "tuck" and self._fold_route(senses) is not None:
+            # THE SHORT ROUTE (see `fold_route`): release pose -> waypoint ->
+            # tuck, straight segments, every joint arriving together, the
+            # slowest at `fold_route_rate`.
+            route = self._route
+            s_goal = p.fold_route_rate * since
+            arm = dict(zip(moss.ARM_JOINTS, route[-1]))
+            for a, b in zip(route, route[1:]):
+                L = float(np.abs(np.subtract(b, a)).max())
+                if s_goal < L:
+                    k = s_goal / max(L, 1e-9)
+                    arm = {j: float(qa + (qb - qa) * k)
+                           for j, qa, qb in zip(moss.ARM_JOINTS, a, b)}
+                    break
+                s_goal -= L
+            arm_now = senses.arm or {}
+            for j in list(arm):
+                if j in arm_now:
+                    q = float(arm_now[j])
+                    arm[j] = float(np.clip(arm[j], q - p.fold_leash_rad,
+                                           q + p.fold_leash_rad))
+            arm[moss.GRIPPER_JOINT] = moss.MISSION_OPEN_M
+            note = "tuck: folding home by the short route"
+            if self._folded(senses) or since >= p.fold_policy_s:
+                self._route = None
                 self._to("search", t)
 
         elif self.state == "tuck" and "fold" in self._sessions:

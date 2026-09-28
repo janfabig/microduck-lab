@@ -83,3 +83,37 @@ hover, look, align, descend, close, rise, often ending in a fallback. Off. When 
 on a butt it holds it (6/7 in a trace). Next if pursued: a faster pinch (shorter phases), or
 use it as demonstrations for the learned pick. Also: with the lift gate, butts kept fell 21
 -> 4 (end-to-end grips sit beyond its 3 cm) — reported to the gate's session.
+* Slow swing for EVERY carry under 8 cm (not just pinched ones), 96 seeds: 874 v 878 (-0.04
+  +- 0.12) — null; the card stays at 0 delivered: held by its 4 mm edges it slips on any
+  swing. Not landed. State at c650a4f: 878 over 96 seeds (9.1 per 5-min run; 4.0 at the start
+  of 2026-09-27). Remaining losses: cans (48 lift + 60 stow of 324), paper in the lift (45),
+  the card (never delivered). Next levers are no longer brain knobs: a pick that scores the
+  SETTLED DEEP GRIP the brain lifts on (the gate session's suggestion), and the fold.
+* SETTLED-GRIP RETRAIN (50e9a1 = s6 + success on "both pads held 0.35 s, and within 3 cm for
+  objects >= 8 cm", the lift gate's handover), 2M steps: 96 seeds 882 v 878 (+0.04 +- 0.14) —
+  null. Cans kept 242 v 224 and lift losses 114 v 128, balls 83 v 88. The gate already refuses
+  anything but a deep grip at the handover, so scoring it in the env adds little. Not shipped;
+  the `settled_grip` knob removed. The yard stays at c650a4f: 878 / 96 seeds.
+
+## The fold: a shorter route, not a retrain (2026-09-28)
+
+* `tuck` was 88 s of a 300 s run (29%, ~12 folds). The learned fold (81875e) moves at its
+  0.75 rad/s command cap THE WHOLE WAY — 7.8 s on every delivery — so it is not slow, its
+  route is long: paid to pass `moss.RETRACT_WAYPOINT` (chosen to serve 14 different delivery
+  poses) it travels 3.0 rad out and 3.2 back from a release pose 2.0 rad from home. This brain
+  releases from ONE pose (12/15 folds). A planner on the robot's own collision model found a
+  waypoint from it whose route costs 2.0 rad of the slowest joint (the roll) — 2.5 s.
+* `fold_route` (scripted, rate-capped, leashed, only from the release pose), moss-yard 96
+  seeds: **876 v 848 (+0.29 +- 0.16)**, tuck 86 -> 50 s/run, 0 bin contacts on 888 route
+  folds. At 1.2 rad/s: +0.15 +- 0.15 and more contact — the cap stays at 0.75.
+* The rise in contact was NOT the route: it was the learned fold handed an arm out in FRONT
+  after a missed pick (it trained from over-the-bin starts only) — 7/15 such folds scraped,
+  up to the 12 s budget. `missed_pick_straight` sends those home by the drop path: **893 v
+  848 (+0.47 +- 0.15, halves +0.46/+0.48); +0.18 +- 0.10 over the route alone.** Both ON.
+* Baseline note: the same 96 seeds scored 848 today against 878 at c650a4f — the live tree
+  carries another session's uncommitted `moss_env.py`/`vec_env.py` edits; both arms of every
+  pair ran on the same tree.
+* Open: straight-home paths (missed picks, and the older drop path from lift/stow) still
+  brush the hull, ~26-58 ticks a fold. Planned waypoints are start-specific (one miss pose had
+  no single-waypoint route), so the fix is a two-stage route through a raised pose. No fold
+  retrain is needed for this gain.
