@@ -871,6 +871,10 @@ class Detector:
           outside   not in the field of view
           far       beyond `max_range_m`
 
+        Plus `near` = [sometimes, every frame]: the range, m, inside which a
+        target this size is found at all, and on every frame. A blocked one
+        carries `by`: what the ray to its centre hits first.
+
         Deterministic: ray casts and angles only, no draws from `self.rng`,
         so calling it does not change what the robot detects.
         """
@@ -915,8 +919,33 @@ class Detector:
                 e["why"] = ("far" if rng > s.max_range_m else
                             "blocked" if inview else "outside")
                 e["p"] = 0.0
+                if e["why"] == "blocked":
+                    e["by"] = self._blocker(data, origin, d, rng, tgt)
+            # How near it has to come to be found: sometimes, and every frame.
+            e["near"] = [round(float(tgt.radius / np.tan(s.w_none / 2)), 2),
+                         round(float(tgt.radius / np.tan(s.w_full / 2)), 2)]
             out.append(e)
         return out
+
+    def _blocker(self, data: mujoco.MjData, origin: np.ndarray, p: np.ndarray,
+                 rng: float, tgt: "Target") -> str:
+        """What the ray to a blocked target's centre hits first: "own body"
+        (the robot's own arm, mostly), another target's name, or the geom's."""
+        gid = np.zeros(1, dtype=np.int32)
+        vec = np.ascontiguousarray(p / rng, dtype=np.float64)
+        dist = mujoco.mj_ray(self.model, data, origin, vec, self._geomgroup, 1,
+                             self.exclude_body, gid)
+        if dist < 0 or gid[0] < 0:
+            return "edge of view"
+        body = int(self.model.geom_bodyid[gid[0]])
+        root = int(self.model.body_rootid[body])
+        if root == self.own_root:
+            return "own body"
+        for t in self.targets:
+            if t.body >= 0 and int(self.model.body_rootid[t.body]) == root and t is not tgt:
+                return t.name
+        name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, int(gid[0])) or ""
+        return name.split("/")[-1] or "something"
 
     # -- measurement -------------------------------------------------------
     def lens(self, data: mujoco.MjData) -> tuple[np.ndarray, np.ndarray]:

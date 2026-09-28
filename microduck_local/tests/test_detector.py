@@ -625,6 +625,10 @@ def test_explain_says_why_each_target_is_or_is_not_seen():
     det = Detector(m, site="a/head_camera", targets=tg, spec=spec, seed=0)
     why = {e["name"]: e["why"] for e in det.explain(d)}
     assert why == {"b": "seen", "c": "outside", "w": "blocked", "cap": "small"}
+    rows = {e["name"]: e for e in det.explain(d)}
+    assert rows["w"]["by"] == "wall0" or "wall" in rows["w"]["by"]
+    some, every = rows["cap"]["near"]
+    assert every < some < 1.2 and abs(some - 0.0075 / math.tan(spec.w_none / 2)) < 0.01
     det = Detector(m, site="a/head_camera", targets=tg, spec=replace(spec, max_range_m=0.3))
     assert {e["name"]: e["why"] for e in det.explain(d)}["b"] == "far"
 

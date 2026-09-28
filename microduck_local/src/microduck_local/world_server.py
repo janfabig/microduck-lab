@@ -1119,13 +1119,14 @@ def tof_payload(w: World, d) -> dict | None:
 
 def _explain_cached(w, det, t: float) -> list[dict]:
     """`det.explain` for the frame captured at `t`, computed once, as
-    rows `[name, why, p, x, y, z, radius]`."""
+    rows `[name, why, p, x, y, z, radius, near_some, near_all, blocked_by]`."""
     cache = getattr(det, "_why_cache", None)
     if cache is None or cache[0] != t:
-        # Compact rows, [name, why, p, x, y, z, radius]: a room's worth of
-        # dicts was 1.1 kB on EVERY stream frame.
+        # Compact rows, [name, why, p, x, y, z, radius, near_some, near_all,
+        # blocked_by]: a room's worth of dicts was 1.1 kB on EVERY frame.
         cache = (t, [[e["name"], e["why"], e["p"],
-                      *(round(v, 3) for v in e["xyz"]), e["r"]]
+                      *(round(v, 3) for v in e["xyz"]), e["r"], *e["near"],
+                      e.get("by")]
                      for e in det.explain(w.data)])
         det._why_cache = cache
     return cache[1]

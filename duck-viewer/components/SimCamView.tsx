@@ -33,8 +33,10 @@ import type { Scene } from "@/lib/lab";
 import { getSelectedDuck } from "@/lib/select";
 import { OVERLAY_LAYER, quatRotate, type DetPayload, type SimClient } from "@/lib/sim";
 
-/** `[name, why, p, x, y, z, radius]` (world_server._explain_cached). */
-type WhyRow = [string, string, number, number, number, number, number];
+/** `[name, why, p, x, y, z, radius, nearSome, nearAll, blockedBy]`
+ *  (world_server._explain_cached): nearSome / nearAll are the ranges, m,
+ *  inside which a target this size is found at all / on every frame. */
+type WhyRow = [string, string, number, number, number, number, number, number?, number?, (string | null)?];
 type CamDet = DetPayload & { why?: WhyRow[]; wrist?: { fov: [number, number]; range: number } };
 
 const COLORS: Record<string, string> = {
@@ -58,15 +60,20 @@ const WRIST_BODY = "moss_arm_camera";
 /** The filled floor wedge: K strips between the near edge and WEDGE_M. */
 const WEDGE_K = 12;
 
-/** A readable reason for a row; null = draw the ring only. */
+/** The label for a row, worded as what MOSS can or cannot see and WHY —
+ *  the first cut ("cap0 · too small at 1.7 m") read as a claim MOSS was
+ *  making about the cap, when it is the simulator explaining why MOSS
+ *  cannot see it. null = draw the ring only. */
 export function whyLabel(row: WhyRow, dist: number): string | null {
-  const [name, why, p] = row;
+  const [name, why, p, , , , , nearSome, , by] = row;
   const d = `${dist.toFixed(1)} m`;
   switch (why) {
-    case "seen": return `${name} · seen · ${d}`;
-    case "marginal": return `${name} · ${Math.round(p * 100)}% of frames · ${d}`;
-    case "small": return `${name} · too small at ${d}`;
-    case "blocked": return `${name} · blocked · ${d}`;
+    case "seen": return `MOSS sees ${name} · ${d}`;
+    case "marginal": return `MOSS sees ${name} in ${Math.round(p * 100)}% of frames · ${d}`;
+    case "small":
+      return `can't see ${name}: too small from ${d}` + (nearSome ? ` (needs < ${nearSome.toFixed(1)} m)` : "");
+    case "blocked":
+      return `can't see ${name}: ` + (by === "own body" ? "its own arm is in the way" : by ? `${by} is in the way` : "blocked");
     default: return null;
   }
 }
@@ -108,6 +115,7 @@ export function CamOverlay({
   const fillPos = useMemo(() => new Float32Array(WEDGE_K * 6 * 3), []);
   const groups = useRef<(THREE.Group | null)[]>([]);
   const tags = useRef<(HTMLDivElement | null)[]>([]);
+  const legend = useRef<HTMLDivElement | null>(null);
 
   useFrame(() => {
     const ls = lines.current;
@@ -117,6 +125,7 @@ export function CamOverlay({
     let nl = 0;
     let nf = 0;
     let nr = 0;
+    let drewAny = false;
     const seg = (a: number[], b: number[], c: string) => {
       if (n >= MAX_SEG) return;
       const k = n * 6;
@@ -143,6 +152,7 @@ export function CamOverlay({
       for (const d of ducks) {
         const det = d.sensors?.det as CamDet | undefined;
         if (!det?.why || !det.cam || det.cam.length < 7) continue;
+        drewAny = true;
         const o = det.cam.slice(0, 3);
         const q = det.cam.slice(3, 7);
         const [fh, fv] = (det.fov ?? [60, 45]).map((v) => (v * Math.PI) / 360);
@@ -209,6 +219,9 @@ export function CamOverlay({
         }
       }
     }
+    const lg = legend.current;
+    const want = f && enabled && drewAny ? "block" : "none";
+    if (lg && lg.style.display !== want) lg.style.display = want;
     for (let i = nl; i < MAX_LABELS; i++) {
       const g = groups.current[i];
       if (g && g.visible) g.visible = false;
@@ -250,6 +263,22 @@ export function CamOverlay({
         </bufferGeometry>
         <meshBasicMaterial color={WEDGE} transparent opacity={0.1} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
+      <Html fullscreen zIndexRange={[15, 0]} style={{ pointerEvents: "none" }}>
+        <div ref={legend} style={{ display: "none", position: "absolute", left: 56, bottom: 64, maxWidth: 330,
+          font: "10px/1.5 ui-monospace, Menlo, monospace", color: "#c9d1d9", padding: "6px 8px",
+          background: "rgba(16,18,22,0.82)", border: "1px solid #2d333b", borderRadius: 4 }}>
+          <div style={{ color: "#e6edf3", marginBottom: 3 }}>HEAD CAMERA · what MOSS can see</div>
+          <div><span style={{ color: COLORS.seen }}>●</span> sees it every frame</div>
+          <div><span style={{ color: COLORS.marginal }}>●</span> sees it on some frames (small, or at range)</div>
+          <div><span style={{ color: COLORS.small }}>●</span> can't see it: too few pixels at this range</div>
+          <div><span style={{ color: COLORS.blocked }}>●</span> can't see it: something is in the way</div>
+          <div><span style={{ color: COLORS.outside }}>●</span> outside the camera's view</div>
+          <div style={{ color: "#8b949e", marginTop: 3 }}>
+            The simulator's explanation, from where things really are — not MOSS's own belief.
+            Teal wedge: the camera's view on the floor. Blue cone: the wrist depth camera (0.6 m).
+          </div>
+        </div>
+      </Html>
       {Array.from({ length: MAX_LABELS }, (_, i) => (
         <group key={i} ref={(g) => { groups.current[i] = g; }} visible={false}>
           <Html center zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
