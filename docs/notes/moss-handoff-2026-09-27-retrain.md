@@ -20,3 +20,18 @@
 * Reading: better picks and more carries have now failed to move the bin count four times.
   The count is limited somewhere else — next is a TIME budget of a 300 s run (search,
   approach, pick attempts, carry, release, fold) to see where the seconds go.
+
+## Where the 300 s go, and keeping the arm out between retries (2026-09-27)
+
+Time budget, 478dad, 12 moss-yard runs: deploy 79.5 s/run (26%, x13.3, 6.0 s each), tuck
+76.3 s (25%, x12.9, 5.9 s), creep 70.7 s (24%, x13.3, 5.3 s), stow 38.4 s (13%, x5.4), the
+rest 12% — ~13 pick attempts at ~17 s each for 3.4 deliveries. This is why better picks,
+more carries and fewer drops have not moved the bin count: each attempt pays 12 s of arm
+travel whatever its outcome.
+* KEEP THE ARM OUT between retries on the same object (`retry_deployed`: a timed-out pick
+  with its target still in sight goes back to `deploy`, not `tuck`): 48 seeds 163 v 190,
+  paired -0.56 +- 0.28, both halves. Tuck 76 -> 51 s, but deploy did not get cheaper (87 s,
+  x17.2 — re-aligning into the band costs ~5 s from the pick pose too), pick attempts rose
+  13.3 -> 16.8 and deliveries fell 3.42 -> 3.17: a pick that failed once fails again from
+  the same spot, and the tuck-and-approach cycle came back from a different angle. Reverted
+  (patch `retry_deployed.patch` in scratch).
