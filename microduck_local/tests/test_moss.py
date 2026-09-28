@@ -2005,6 +2005,26 @@ def test_the_pick_runs_at_its_trained_25_hz_in_the_brain():
     assert runs == 5, runs                            # 25 Hz, not 50
 
 
+def test_the_base_lines_up_for_the_pick_at_twice_the_old_speed():
+    """Deploy took 26% of every yard run, and the arm was not what took it:
+    it reaches the grasp pose in 1.2 s, then the base crept into the handover
+    band at 0.06 m/s and 7 deploys in 20 ran to the 9 s cap. At 0.12 m/s,
+    48 moss-yard seeds put 225 objects in the bin against 190."""
+    from microduck_local.brain.runtime import Senses
+    from microduck_local.brain.tidy_moss import TidyMoss
+
+    b = TidyMoss()
+    assert b.p.band_mps == pytest.approx(0.12)
+    arm = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    arm[moss.GRIPPER_JOINT] = 0.041
+    b._to("deploy", 0.0)
+    far = b.p.band_far_locked_m + 0.10              # beyond the band
+    b._fix, b._fix_t = (far, 0.0), 0.0
+    it = b.step(Senses(t=0.02, odom=(0.0, 0.0, 0.0), speed=0.0, arm=arm))
+    assert b.state == "deploy"
+    assert it.twist[0] == pytest.approx(0.12)
+
+
 def test_a_can_dropped_on_the_lift_is_noticed_and_the_arm_goes_straight_home():
     """8 of 10 drops in the yard happen at the start of the carry and the
     empty-jaw check only ran in `stow`, so the brain noticed 2.8 s late and

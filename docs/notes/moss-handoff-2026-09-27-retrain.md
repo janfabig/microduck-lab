@@ -35,3 +35,9 @@ travel whatever its outcome.
   13.3 -> 16.8 and deliveries fell 3.42 -> 3.17: a pick that failed once fails again from
   the same spot, and the tuck-and-approach cycle came back from a different angle. Reverted
   (patch `retry_deployed.patch` in scratch).
+* WHERE DEPLOY'S TIME REALLY GOES: the arm reaches the grasp pose in 1.2 s (15 of 20
+  deploys); the rest is the base creeping into the handover band at 0.06 m/s, and 7 of 20
+  deploys ran to the 9 s cap. `band_mps` 0.12: **48 seeds 225 v 190 in the bin, paired
+  +0.73 +- 0.29 (+0.96 / +0.50 per half)** — the first bin gain since the 25 Hz fix. 0.18 is
+  no better (-0.12 +- 0.30 v 0.12); `band_timeout_s` 1.0 instead is worse (77 v 94 on 24).
+  Now the default, with a test that fails at 0.06.

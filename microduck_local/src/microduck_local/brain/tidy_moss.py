@@ -196,7 +196,14 @@ class TidyMossParams:
     #: Closing speed while lining up, m/s. Forward only — arriving NEAR
     #: converts at 73% against 38% inside the trained box, so there is
     #: nothing here worth backing away from.
-    band_mps: float = 0.06
+    #: 0.12, not 0.06 (2026-09-27). A time budget of moss-yard runs put
+    #: deploy at 26% of every 300 s, and the arm was not what took it: it
+    #: reaches the grasp pose in 1.2 s; the base then crept into the band at
+    #: 0.06 m/s and 7 deploys in 20 ran to the 9 s cap. 48 seeds x 300 s with
+    #: 478dad: 225 v 190 in the bin, paired +0.73 +- 0.29 per seed (+0.96 /
+    #: +0.50 per half). 0.18 is no better (-0.12 +- 0.30 v 0.12), and cutting
+    #: the band short instead (band_timeout_s 1.0) is worse (77 v 94).
+    band_mps: float = 0.12
     close_s: float = 1.0
     lift_s: float = 1.8
     stow_s: float = 3.4
