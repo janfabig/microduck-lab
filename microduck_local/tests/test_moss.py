@@ -708,7 +708,11 @@ def test_the_grip_pick_recipe_is_found_and_ladders_into_the_yard(tmp_path):
     b = match_behavior("pick with the depth camera", "moss")
     assert b is not None and b.id == "moss_pick_grip"
     assert [st.env.get("MICRODUCK_MOSS_HANDOVER_STATES") for st in b.curriculum] == [
-        None, None, "1", "1"]
+        None, None, None, None, "1", "1"]
+    # nothing charged until the pick can grab: every penalty on from step
+    # one taught it to hover and never close (0/20 at 900k)
+    assert all("MICRODUCK_MOSS_TOPPLE" not in st.env for st in b.curriculum[:4])
+    assert b.curriculum[0].env["MICRODUCK_MOSS_PROP_VARIETY"] == "0"
     assert match_behavior("pick up the can", "moss").id == "moss_pick"
     donor = tmp_path / "d"
     donor.mkdir()

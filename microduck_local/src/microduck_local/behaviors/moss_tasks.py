@@ -130,7 +130,8 @@ _register(MOSS_PICK)
 
 #: THE PICK THAT CAN SEE ITS OWN GRIP (2026-09-27). Trained from scratch, not
 #: fine-tuned: its inputs mean something new. Four things differ from
-#: MOSS_PICK, each measured first:
+#: MOSS_PICK, each measured first (the curriculum adds one difficulty per
+#: stage; the first version turned everything on at once and never closed):
 #:   * `grip_xyz` — the wrist depth camera's fix of the object in the TOOL
 #:     frame (is it centred between the jaws, and how deep). A distance alone
 #:     (8956a1) improved picks in the env and not the bin.
@@ -155,26 +156,54 @@ MOSS_PICK_GRIP = dataclasses.replace(
     episode_s=15.0,
     curriculum=(
         CurriculumStage(
-            label="jaws around it", steps=900_000,
-            env={"MICRODUCK_MOSS_PICK_RUNG": "0"},
-            detail="The object between the pads: what closing does, and what "
-                   "the depth camera shows when it is centred."),
+            label="cans between the jaws", steps=1_500_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "0",
+                 "MICRODUCK_MOSS_PROP_VARIETY": "0"},
+            detail="One shape, already between the pads, and nothing charged: "
+                   "learn what closing and lifting do. MEASURED: with every "
+                   "penalty on from the first step the policy learned to hover "
+                   "and never close (0/20 at 900k)."),
         CurriculumStage(
-            label="just out of reach", steps=700_000,
-            env={"MICRODUCK_MOSS_PICK_RUNG": "1"},
+            label="every shape between the jaws", steps=2_000_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "0",
+                 "MICRODUCK_MOSS_PROP_VARIETY": "1"},
+            detail="All the yard's shapes, still between the pads."),
+        CurriculumStage(
+            label="just out of reach", steps=1_500_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "1",
+                 "MICRODUCK_MOSS_PROP_VARIETY": "1"},
             detail="A few centimetres of reaching before the grip."),
         CurriculumStage(
-            label="half from the yard", steps=1_500_000,
+            label="the handover distance", steps=2_000_000,
             env={"MICRODUCK_MOSS_PICK_RUNG": "2",
-                 "MICRODUCK_MOSS_HANDOVER_STATES": "1",
-                 "MICRODUCK_MOSS_HANDOVER_FRAC": "0.5"},
-            detail="The brain's handover distance, and half the episodes "
-                   "starting exactly where moss-yard hands over."),
+                 "MICRODUCK_MOSS_PROP_VARIETY": "1"},
+            detail="Where the brain hands over."),
         CurriculumStage(
-            label="the yard's handovers", steps=1_500_000,
+            label="deep, careful, half from the yard", steps=2_500_000,
             env={"MICRODUCK_MOSS_PICK_RUNG": "2",
+                 "MICRODUCK_MOSS_PROP_VARIETY": "1",
+                 "MICRODUCK_MOSS_DEEP_GRIP": "0.035",
                  "MICRODUCK_MOSS_HANDOVER_STATES": "1",
-                 "MICRODUCK_MOSS_HANDOVER_FRAC": "1.0"},
+                 "MICRODUCK_MOSS_HANDOVER_FRAC": "0.5",
+                 "MICRODUCK_MOSS_TOPPLE": "15.0",
+                 "MICRODUCK_MOSS_TORQUE_SAT": "0.05",
+                 "MICRODUCK_MOSS_OVERSPEED": "0.3",
+                 "MICRODUCK_MOSS_ARM_FLOOR": "0.2",
+                 "MICRODUCK_MOSS_LOW_APPROACH": "0.1"},
+            detail="Only a deep grip counts, the shipped pick's penalties come "
+                   "on, and half the episodes start where moss-yard hands over."),
+        CurriculumStage(
+            label="the yard's handovers", steps=2_500_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "2",
+                 "MICRODUCK_MOSS_PROP_VARIETY": "1",
+                 "MICRODUCK_MOSS_DEEP_GRIP": "0.035",
+                 "MICRODUCK_MOSS_HANDOVER_STATES": "1",
+                 "MICRODUCK_MOSS_HANDOVER_FRAC": "1.0",
+                 "MICRODUCK_MOSS_TOPPLE": "15.0",
+                 "MICRODUCK_MOSS_TORQUE_SAT": "0.05",
+                 "MICRODUCK_MOSS_OVERSPEED": "0.3",
+                 "MICRODUCK_MOSS_ARM_FLOOR": "0.2",
+                 "MICRODUCK_MOSS_LOW_APPROACH": "0.1"},
             detail="Every episode from a real yard handover state."),
     ),
 )
