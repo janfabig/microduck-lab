@@ -264,7 +264,7 @@ export function CamOverlay({
         <meshBasicMaterial color={WEDGE} transparent opacity={0.1} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       <Html fullscreen zIndexRange={[15, 0]} style={{ pointerEvents: "none" }}>
-        <div ref={legend} style={{ display: "none", position: "absolute", left: 56, bottom: 64, maxWidth: 330,
+        <div ref={legend} style={{ display: "none", position: "absolute", zIndex: 50, left: 56, bottom: 64, maxWidth: 330,
           font: "10px/1.5 ui-monospace, Menlo, monospace", color: "#c9d1d9", padding: "6px 8px",
           background: "rgba(16,18,22,0.82)", border: "1px solid #2d333b", borderRadius: 4 }}>
           <div style={{ color: "#e6edf3", marginBottom: 3 }}>HEAD CAMERA · what MOSS can see</div>

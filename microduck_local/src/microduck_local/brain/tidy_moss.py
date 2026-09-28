@@ -538,6 +538,34 @@ class TidyMossParams:
     #: yard seeds: 893 v 876 (+0.18 +- 0.10). Straight home still brushes the
     #: hull (~26 ticks a fold) — a planned route from the front is next.
     missed_pick_straight: bool = True
+    #: THE ROOM MODEL (`brain/moss_search.py`). `object_memory`: remember
+    #: every toy seen, and approach only a CONFIRMED one (two detections in
+    #: the same place) — a phantom detection never recurs where it was.
+    #: `patrol`: when a full turn shows nothing, drive to the nearest
+    #: remembered object and look from close up, else drive the rim of the
+    #: work area (`patrol_inset_m` in from the scenario's walls) turning to
+    #: face the middle at each waypoint.
+    #: MEASURED, moss-yard, 48 seeds x 15 min, objects truly in the bin:
+    #: 486 v 469 (+0.35 +- 0.10, halves +0.46/+0.25); every seed cleared all
+    #: ten grippable objects (39/48 before — the cap was left 11 times); 188
+    #: phantom approaches -> 0; search 464 -> 258 s a run. At 5 min, the
+    #: benchmark, 444 v 439 (+0.10 +- 0.17): the end game rarely starts by
+    #: then, so nothing is lost and nothing gained there.
+    object_memory: bool = True
+    patrol: bool = True
+    patrol_inset_m: float = 0.45
+    patrol_mps: float = 0.15
+    #: A leg that has not arrived in this long is abandoned.
+    patrol_leg_s: float = 20.0
+    #: How long to hold still and look on arrival.
+    patrol_look_s: float = 1.0
+    #: The detector finds a thing on EVERY frame out to this many times its
+    #: size (its `w_full`, 2.81 deg at 640 px over 87 deg): the range a
+    #: remembered object is looked at from, and inside which not seeing it
+    #: means it is gone.
+    see_range_per_size: float = 20.0
+    #: How far out a look counts as having covered the floor, m.
+    cover_m: float = 1.0
     #: A detection older than this is not a fix any more.
     stale_s: float = 1.0
     #: Only cans IN FRONT are targets: a bearing past this is something the
@@ -726,6 +754,16 @@ class TidyMoss:
         self._fold_seeded = False
         self._dropped = False
         self._drop_from: dict[str, float] | None = None
+        #: The room model (`object_memory` / `patrol`): built on first use,
+        #: the work area from the world's walls (`runtime.attach_world`).
+        self.world = None
+        self._mem = None
+        self._cov = None
+        self._patrol = None
+        self._srch: dict | None = None
+        self._det_t: float | None = None
+        self._mem_target: tuple[float, float] | None = None
+        self._mem_picked = 0
         #: The scripted fold's route (poses), seeded on its first tick.
         self._route: list | None = None
         self._route_tried = False
@@ -763,9 +801,28 @@ class TidyMoss:
         `moss.CAMERA_POS` ahead of the base origin — his CAD number, so the
         offset is added here rather than absorbed into the standoff.
         """
-        frame = senses.det
-        if frame is None or not frame.detections:
+        out = []
+        for r, x, y, size in self._toys_in_view(senses.det):
+            if self._is_written_off(x, y):
+                continue                       # tried, could not collect
+            if self.p.object_memory and self._mem is not None:
+                w = self._world((x, y))
+                e = (None if w is None else
+                     self._mem.near(*w, self._mem.gate_m + self._mem.gate_per_m * r))
+                if e is None or not self._mem.confirmed(e):
+                    continue                   # seen once: maybe a phantom
+            out.append((r, x, y, size))
+        if not out:
             return None
+        _r, x, y, size = min(out)
+        self._fix_size = float(size)
+        return (x, y)
+
+    def _toys_in_view(self, frame) -> list[tuple[float, float, float, float]]:
+        """(range, x, y, size) of each toy detection, BASE frame, that could
+        be a target: in front, not under the robot, not in its own bin."""
+        if frame is None or not frame.detections:
+            return []
         out = []
         for det in frame.detections:
             if det.cls != "toy":
@@ -786,17 +843,174 @@ class TidyMoss:
             if (moss.BIN_INTERIOR_X[0] - 0.05 < x < moss.BIN_INTERIOR_X[1] + 0.05
                     and moss.BIN_INTERIOR_Y[0] < y < moss.BIN_INTERIOR_Y[1]):
                 continue                       # its own bin's contents
-            if self._is_written_off(x, y):
-                continue                       # tried, could not collect
             # its physical SIZE, from the same detection: the detector ranges
             # each object by its own size, so range x angular width is it
             size = 2.0 * r * math.tan(max(float(det.width), 1e-4) / 2.0)
             out.append((r, x, y, size))
-        if not out:
+        return out
+
+    # -- the room model (brain/moss_search.py) ------------------------------
+    def _to_base(self, wx: float, wy: float) -> tuple[float, float] | None:
+        od = self._odom
+        if od is None:
             return None
-        _r, x, y, size = min(out)
-        self._fix_size = float(size)
-        return (x, y)
+        dx, dy = wx - od[0], wy - od[1]
+        c, s_ = math.cos(od[2]), math.sin(od[2])
+        return (dx * c + dy * s_, -dx * s_ + dy * c)
+
+    def _remember(self, senses: Senses, t: float) -> None:
+        """Fold this camera frame into the memory and the coverage map."""
+        from .moss_search import Coverage, ObjectMemory, Patrol, area_from_world
+        p = self.p
+        if self._mem is None:
+            self._mem = ObjectMemory()
+            area = area_from_world(self.world)
+            self._patrol = Patrol(area, p.patrol_inset_m)
+            self._cov = Coverage(area) if area is not None else None
+        # A delivered object leaves the memory with the delivery.
+        if self._target_world is not None:
+            self._mem_target = self._target_world
+        if self.picked != self._mem_picked:
+            self._mem_picked = self.picked
+            if self._mem_target is not None:
+                self._mem.forget_near(*self._mem_target, p.same_can_m)
+                self._mem_target = None
+        frame = senses.det
+        if frame is None or frame.t == self._det_t or self._odom is None:
+            return
+        self._det_t = frame.t
+        pts = []
+        for rng, x, y, size in self._toys_in_view(frame):
+            w = self._world((x, y))
+            if w is not None:
+                pts.append((w[0], w[1], size, rng))
+        matched = self._mem.observe(pts, t)
+        # Only with the arm tucked is the camera's view its own: deployed,
+        # the gripper fills the top of the frame.
+        if self.state not in ("search", "approach"):
+            return
+        half = 0.70                      # inside the 43.5 deg half field
+        expected = []
+        for e in self._mem.items:
+            b = self._to_base(e.x, e.y)
+            if b is None:
+                continue
+            cx = b[0] - moss.CAMERA_POS[0]
+            r = math.hypot(cx, b[1])
+            if (cx > 0 and abs(math.atan2(b[1], cx)) < half
+                    and 0.2 < r < p.see_range_per_size * e.size):
+                expected.append(e)
+        self._mem.looked(expected, {e.id for e in matched}, t)
+        if self._cov is not None:
+            od = self._odom
+            cam = self._world((moss.CAMERA_POS[0], 0.0))
+            if cam is not None:
+                self._cov.mark(cam, od[2], half, 0.15, p.cover_m, t)
+
+    def _patrol_step(self, senses: Senses, t: float):
+        """The search when `patrol` is on -> (twist, note)."""
+        p = self.p
+        od = self._odom
+        spin = ((0.0, 0.0, p.search_wz), "search: turning for a can")
+        if od is None or self._mem is None:
+            return spin
+        x, y, yaw = od
+
+        def wrap(a):
+            return math.atan2(math.sin(a), math.cos(a))
+
+        st = self._srch
+        if st is None:
+            st = self._srch = {"phase": "spin", "turned": 0.0, "yaw": yaw,
+                               "since": t, "goal": None, "look": None, "id": None}
+        if st["phase"] == "spin":
+            st["turned"] += abs(wrap(yaw - st["yaw"]))
+            st["yaw"] = yaw
+            if st["turned"] < 2.0 * math.pi:
+                return spin
+            st["phase"] = "choose"
+        if st["phase"] == "choose":
+            cands = [e for e in self._mem.items if self._mem.confirmed(e)
+                     and not any(math.hypot(e.x - wx, e.y - wy) < p.same_can_m
+                                 for wx, wy, _t in self._written_off)]
+            if cands:
+                e = min(cands, key=lambda e: math.hypot(e.x - x, e.y - y))
+                view = min(max(e.size * p.see_range_per_size
+                               + moss.CAMERA_POS[0], 0.45), 0.8)
+                d = math.hypot(e.x - x, e.y - y)
+                k = max(d - view, 0.0) / max(d, 1e-6)
+                st.update(phase="go", kind="memory", id=e.id, since=t,
+                          goal=(x + (e.x - x) * k, y + (e.y - y) * k),
+                          look=(e.x, e.y))
+            else:
+                wp = self._patrol.next_waypoint(x, y) if self._patrol else None
+                if wp is None:
+                    st.update(phase="spin", turned=0.0, yaw=yaw)
+                    return spin
+                st.update(phase="go", kind="rim", id=None, since=t, goal=wp,
+                          look=self._patrol.centre)
+        if st["phase"] == "go":
+            gx, gy = st["goal"]
+            d = math.hypot(gx - x, gy - y)
+            if t - st["since"] > p.patrol_leg_s:
+                if st["kind"] == "memory":
+                    e = next((e for e in self._mem.items if e.id == st["id"]), None)
+                    if e is not None:
+                        self._mem.items.remove(e)
+                st["phase"] = "choose"
+                return (0.0, 0.0, 0.0), "search: gave up on that leg"
+            if d > 0.08:
+                err = wrap(math.atan2(gy - y, gx - x) - yaw)
+                wz = max(-p.search_wz, min(p.search_wz, 2.0 * err))
+                vx = p.patrol_mps * max(0.0, math.cos(err)) ** 3 if abs(err) < 1.0 else 0.0
+                what = ("a remembered object" if st["kind"] == "memory"
+                        else "the next spot on the rim")
+                return (vx, 0.0, wz), f"search: driving to {what}"
+            st["phase"] = "face"
+        if st["phase"] == "face":
+            lx, ly = st["look"] or (x + math.cos(yaw), y + math.sin(yaw))
+            err = wrap(math.atan2(ly - y, lx - x) - yaw)
+            if abs(err) > 0.12:
+                return ((0.0, 0.0, max(-p.search_wz, min(p.search_wz, 2.0 * err))),
+                        "search: turning to look")
+            st.update(phase="look", since=t)
+        if st["phase"] == "look":
+            if t - st["since"] < p.patrol_look_s:
+                return (0.0, 0.0, 0.0), "search: looking"
+            if st["kind"] == "memory":
+                # Looked right at it from close up and did not see it.
+                e = next((e for e in self._mem.items if e.id == st["id"]), None)
+                if e is not None:
+                    self._mem.items.remove(e)
+            st["phase"] = "choose"
+        return (0.0, 0.0, 0.0), "search: choosing where to look"
+
+    def map_payload(self, t: float) -> dict | None:
+        """The room model, for the /sim map: the work area, the rim route,
+        every remembered object, the current leg, and the coverage ages."""
+        if self._mem is None:
+            return None
+        cov = None
+        if self._cov is not None:
+            ages = self._cov.ages(t)
+            cov = {"n": [self._cov.nx, self._cov.ny],
+                   "age": "".join("-" if a >= 99 else str(min(a // 5, 9)) for a in ages)}
+        st = self._srch if self.state == "search" else None
+        return {
+            "area": list(self._patrol.area) if self._patrol and self._patrol.area else None,
+            "rim": [list(w) for w in (self._patrol.waypoints if self._patrol else [])],
+            "mem": [[round(e.x, 3), round(e.y, 3), round(e.size, 3), e.hits,
+                     int(self._mem.confirmed(e)), round(t - e.last, 1),
+                     int(any(math.hypot(e.x - wx, e.y - wy) < self.p.same_can_m
+                             for wx, wy, _t in self._written_off))]
+                    for e in self._mem.items],
+            "target": list(self._target_world) if self._target_world else None,
+            "goal": list(st["goal"]) if st and st.get("goal") else None,
+            "look": list(st["look"]) if st and st.get("look") else None,
+            "leg": (st.get("kind") if st and st["phase"] in ("go", "face", "look") else
+                    (st["phase"] if st else None)),
+            "cov": cov,
+        }
 
     def _range(self, det) -> float:
         """Range from the APPARENT WIDTH and the can's own radius.
@@ -995,8 +1209,8 @@ class TidyMoss:
             if self._gripped_raw(senses):
                 self._carry_from = dict(here)
                 self._policy_cmd = {**here, moss.GRIPPER_JOINT: 0.0}
+                self._pinched = True            # before `_to`: it reads it
                 self._to("lift", t)
-                self._pinched = True
                 return None, "pinch: got it"
             self._attempts += 1
             if self._attempts >= p.max_retries:
@@ -1488,6 +1702,18 @@ class TidyMoss:
         self.state, self._t0 = state, t
         self._fold_seeded = False
         self._route, self._route_tried = None, False
+        if state == "search":
+            self._srch = None
+        if state == "lift" and self._mem is not None:
+            # IT IS IN THE JAWS, not on the floor: forget that spot now, not
+            # on delivery. The pinch picks without a creep target, so waiting
+            # for the delivery left its spot in the memory and the patrol drove
+            # back to look at empty floor (two trips in one traced run). A
+            # drop is simply seen again.
+            pw = (self._pinch or {}).get("world") if self._pinched else None
+            jaw = (float(pw[0]), float(pw[1])) if pw is not None else self._world((0.26, 0.0))
+            if jaw is not None:
+                self._mem.forget_near(jaw[0], jaw[1], 0.15)
         # A new state ramps from where the arm IS now, not from the last
         # state's starting pose. Cleared here so `_ramp_from_here` snapshots
         # again on its first tick.
@@ -1498,6 +1724,8 @@ class TidyMoss:
         self._expire(t)
         self._carry_fix(senses)
         self._track(senses)
+        if self.p.object_memory or self.p.patrol:
+            self._remember(senses, t)
         seen = self._see(senses)
         if seen is not None:
             self._fix, self._fix_t = seen, t
@@ -1516,6 +1744,8 @@ class TidyMoss:
             if fix is not None and seen is not None:
                 self._policy_cmd = None     # the next leg seeds its own pose
                 self._to("approach", t)
+            elif p.patrol:
+                twist, note = self._patrol_step(senses, t)
             else:
                 twist = (0.0, 0.0, p.search_wz)
                 note = "search: turning for a can"
@@ -1994,6 +2224,8 @@ class TidyMoss:
             "picked": {"value": self.picked, "age": 0.0},
             "written_off": {"value": len(self._written_off), "age": 0.0},
             "attempts": {"value": self._attempts, "age": 0.0},
+            **({"map": self.map_payload(self._prev_t)}
+               if self._mem is not None else {}),
         }
 
 

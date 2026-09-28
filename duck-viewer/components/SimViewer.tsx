@@ -73,6 +73,7 @@ import { buildBodyGeometries, Duck, type BodyGeometry } from "./Duck";
 import { RobotBody } from "./SimStage";
 import { ArmBlock, GripperBlock, LidarOverlay, LidarPlot } from "./SimLidar";
 import { CamOverlay } from "./SimCamView";
+import { MossMapOverlay } from "./SimMossMap";
 import { isDuck, robotCount, robotLook } from "@/lib/robots";
 import CameraKeys from "./CameraKeys";
 import { useTruckSwipe } from "./useTruckSwipe";
@@ -1789,6 +1790,8 @@ export default function SimViewer() {
           {scene && client && <DetOverlay scene={scene} client={client} enabled={showTof} />}
           {client && <ChaseOverlay client={client} enabled={showTof} />}
           {client && <MapOverlay client={client} duckId={selected} enabled={showMap} />}
+          {/* …and MOSS's own model of the room — what it believes (components/SimMossMap.tsx). */}
+          {client && <MossMapOverlay client={client} enabled={showMap} />}
           {scene && client && <InsetRender scene={scene} client={client} enabled={showCam} />}
         </group>
         {client && <SimTargets client={client} />}

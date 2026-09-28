@@ -899,7 +899,12 @@ def test_the_tidy_brain_ignores_its_own_bin_and_anything_behind_it():
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
 
+    import dataclasses
     brain = TidyMoss()
+    # The FILTERS, alone: with `object_memory` a sighting also needs a second
+    # frame in the same place (tests/test_moss_search.py), which one call
+    # with no odometry cannot give it.
+    brain.p = dataclasses.replace(brain.p, object_memory=False)
     R = brain.p.can_radius_m
 
     def seen(bearing, rng):

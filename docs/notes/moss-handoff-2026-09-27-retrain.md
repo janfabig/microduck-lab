@@ -117,3 +117,38 @@ use it as demonstrations for the learned pick. Also: with the lift gate, butts k
   brush the hull, ~26-58 ticks a fold. Planned waypoints are start-specific (one miss pose had
   no single-waypoint route), so the fix is a two-stage route through a raised pose. No fold
   retrain is needed for this gain.
+
+## Seeing, remembering, searching: the end game (2026-09-28)
+
+Asked on /sim with one bottle cap left: "why can't it see that? didn't it see it before? do we
+need SLAM?" Three findings, three changes.
+
+* **The cap is below the detector's pixel gate.** A 15 mm cap is found on every frame only
+  inside 0.31 m and never past 1.22 m (0.70 / 2.81 deg at 640 px over 87 deg). Nothing on the
+  page said so. `Detector.explain` (same geometry as `measure`, no noise, no RNG draws) now
+  labels every object on /sim: "MOSS sees ...", "can't see cap0: too small from 1.7 m (needs
+  < 1.2 m)", "can't see ...: its own arm is in the way". MOSS/MARS frames only (`det.why`).
+  The front RealSense's DEPTH is not modelled at all — only its colour detector.
+* **No object memory.** The brain kept only its current target, so anything seen while busy
+  was forgotten, and with nothing in view it spun on the spot. Late in 15-min runs 10 of the
+  last 11 approaches (two seeds) were at PHANTOM detections (the detector's modelled false
+  positives) — the only thing that ever moved it somewhere new.
+* **`object_memory` + `patrol` (brain/moss_search.py), both ON.** Remember every toy seen,
+  in the odometry frame, weighted by sighting precision (range-scaled gate — a flat 0.15 m
+  gate turned one far can into a streak of five); approach only after two sightings in one
+  place; forget a spot when the camera looks straight at it from close enough and sees
+  nothing, or when a lift starts there. With nothing in view after a full turn: go back to
+  the nearest remembered object, else drive the rim of the work area (0.45 m in from the
+  walls) facing the middle at each waypoint. 48 seeds x 15 min, objects TRULY in the bin:
+  **486 v 469 (+0.35 +- 0.10, halves +0.46/+0.25)**; all ten grippable objects binned in
+  48/48 runs (39/48 before; the cap was left 11 times); phantom approaches 188 -> 0; search
+  464 -> 258 s/run. At 5 min 444 v 439 (+0.10 +- 0.17) — the benchmark rarely reaches the
+  end game, so it neither gains nor loses. The card is the only thing left (42/48).
+* The work AREA is declared (the scenario's wall rectangle via `runtime.attach_world`), not
+  sensed: MOSS has no range sensor here. Modelling the RealSense depth would let it map the
+  walls itself — the depth/SLAM session's thread.
+* /sim: "MOSS's map · what it believes" (map toggle) draws the memory, the floor it has
+  looked at, the rim route and its current leg, beside the camera overlay's explanation of
+  what it can really see.
+* Counting note: the brain's own `picked` and the objects truly in the bin differ (a
+  "dropped" pinch that lands in the bin anyway) — new yard numbers here count the bin.
