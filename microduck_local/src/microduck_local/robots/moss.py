@@ -2016,11 +2016,16 @@ class MossBody(BodyBase):
                              ).get("env_kwargs") or {}
         except (OSError, ValueError):
             kw = {}
+        dims: list[int] = []
         if env_kwargs.get("grip_xyz") and not kw.get("grip_xyz"):
-            return list(OBS_GRIP_XYZ)
-        if not env_kwargs.get("publish_grip"):
-            return []
-        return [] if kw.get("publish_grip") else list(OBS_GRIP)
+            dims += list(OBS_GRIP_XYZ)
+        elif env_kwargs.get("publish_grip") and not kw.get("publish_grip"):
+            dims += list(OBS_GRIP)
+        # `publish_proximity` turns the target's HEIGHT (slot 26) into the
+        # wrist camera's range: the same slot, a different quantity
+        if env_kwargs.get("publish_proximity") and not kw.get("publish_proximity"):
+            dims.append(OBS_TARGET_BASE.start + 2)
+        return dims
 
     def train_env_kwargs(self, args) -> dict:
         """MOSS's per-body knob: which rung of the current task's ladder.

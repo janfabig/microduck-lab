@@ -719,6 +719,10 @@ def test_the_grip_pick_recipe_is_found_and_ladders_into_the_yard(tmp_path):
     (donor / "run.json").write_text(_json.dumps({"env_kwargs": {}}))
     assert registry()["moss"].repurposed_obs_dims({"grip_xyz": True}, donor) == list(
         moss.OBS_GRIP_XYZ)
+    # stage 5 turns the proximity input on: slot 26 changes meaning
+    assert registry()["moss"].repurposed_obs_dims(
+        {"grip_xyz": True, "publish_proximity": True},
+        donor) == list(moss.OBS_GRIP_XYZ) + [moss.OBS_TARGET_BASE.start + 2]
 
 
 def test_every_moss_run_records_the_wrist_mount_it_trained_behind(tmp_path):
