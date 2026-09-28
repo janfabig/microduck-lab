@@ -55,3 +55,31 @@ states, deep grips only. Held-out yard states in the env: 121/150 v 478dad 86. B
 Stage-1 lesson: from scratch, 478dad's locked base and randomised wrist stop the first grab
 (8/20 and 14/20 v 19/20 plain; 4/20 with all of them; every penalty on: 0/20).
 Keep-the-arm-out between retries lost again with the faster alignment (216 v 225): removed.
+* Litter fine-tune fa3707 (s6 + litter + handover_frac 0.5): env butts 11/30 v 4/30, others
+  unchanged; yard 48 seeds 362 v 358 (+0.08 +- 0.21) — a trade (paper 43 v 26 kept, butts 15
+  v 24, balls 37 v 47). Not shipped. The shipped pick's card and butt problem in the yard is
+  the CARRY: card 19 carries -> 12 lost in the stow swing, 6 in the lift, 1 kept; butt 44
+  carries -> 20 lost. Next: trace a card carry (squeeze, lift ramp, swing) as the ball's was.
+* THE CARD SLIPS IN THE CARRY, not the grab: traced, it touches only the two pads for the
+  whole carry and leaves them in one tick at a jerk (the lift ending, a leg change in the
+  swing) — a 4 mm card is pinched by its edges. `carry_ease` (smoothstep on every lift/stow
+  leg): 48 seeds **382 v 358** (paired +0.50 +- 0.22, halves +0.54 / +0.46); paper kept 37 v
+  26, cards lost in the lift 1 v 6 — the card is still not delivered (8 lost in the stow).
+  Carrying small objects twice as slowly lost (333; 337 with easing). Easing is on.
+
+## The scripted top-down pinch (2026-09-28): works mechanically, costs too much time
+
+`pinch_small` (off): drive in on a LOCKED target (the head camera's fix jumps to another toy
+as a small thing leaves its view — 9/12 butt pinches drove off toward one), hover over it,
+look down with the wrist camera (aimed at the locked target, not the nearest object), roll
+the wrist, correct for arm sag, descend straight, close slowly, rise straight 6 cm, lift.
+`robots/moss_pinch.py` is the arm's own FK/IK in the base frame (frame check: 0.0 mm).
+Env prototype: butts 24/30 along / 11/30 across (pads stand 8 mm apart shut; a butt is 7-9
+mm) v 4/30 for the learned pick, which shoves the half-gram butt away (22/30 moved > 3 cm).
+Yard, 48 seeds, with the other session's lift gate and the eased carry: pinch OFF 390; ON
+(< 8 cm) 345 — it also took the cans; ON (< 4.5 cm) 369 (paired -0.44 +- 0.24): caps 38 v 31,
+butts 8 v 4, but cans 106 v 120, balls 29 v 39 — each pinch is 8-10 s of approach, look,
+hover, look, align, descend, close, rise, often ending in a fallback. Off. When it completes
+on a butt it holds it (6/7 in a trace). Next if pursued: a faster pinch (shorter phases), or
+use it as demonstrations for the learned pick. Also: with the lift gate, butts kept fell 21
+-> 4 (end-to-end grips sit beyond its 3 cm) — reported to the gate's session.

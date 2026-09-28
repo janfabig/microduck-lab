@@ -340,9 +340,9 @@ that takes a sphere through its centre, or a stow path that keeps the jaws level
   it (its yard balls: 6 kept of 24). A sphere needs its centre BETWEEN the pads.
 * The criterion, measured first: 478dad's env ball picks (120 episodes) run through the
   yard's lift ramp and swing to STOW_HIGH at the 10 mm carry squeeze — centre under 16 mm
-  from the PAD MIDPOINT 33/33 kept, 16-20 mm 9/12, over 20 mm 2/9 (median 14 mm; the pad
-  midpoint is 10-15 mm off the tool point once the jaw closes, so the tool point is the
-  wrong reference). `sphere_centre_m` (recorded kwarg, `MICRODUCK_MOSS_SPHERE_CENTRE`):
+  from the PAD MIDPOINT 33/33 kept, 16-20 mm 9/12, over 20 mm 2/9 (median 14 mm). [CORRECTED
+  2026-09-28: the pad midpoint IS the tool point at every jaw opening (0.0 mm measured with
+  both fingers moving); "10-15 mm off" came from moving one finger alone.] `sphere_centre_m` (recorded kwarg, `MICRODUCK_MOSS_SPHERE_CENTRE`):
   a sphere is only "picked" with its centre within that of the pad midpoint. Test planted
   against a tool-point reference. Fine-tune 0281e5 = 478dad + sphere_centre_m 0.016,
   one knob (run.json diff checked).

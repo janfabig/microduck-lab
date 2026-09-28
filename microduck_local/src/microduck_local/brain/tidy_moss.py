@@ -194,6 +194,49 @@ class TidyMossParams:
     #: `small_object_m` (detected size) is handed over at `band_far_small_m`.
     size_aware_handover: bool = True
     small_object_m: float = 0.08
+    #: A SCRIPTED TOP-DOWN PINCH for small objects (`robots/moss_pinch`):
+    #: look with the wrist depth camera, hover over the object, roll the
+    #: wrist to it, descend straight, close slowly, then the usual lift. The
+    #: learned pick shoves a half-gram butt away before both pads close (22
+    #: of 30 attempts in the pick env; 4/30 picked); this pinch picked 24/30
+    #: with the jaws along the butt and 11/30 across it (the pads stand 8 mm
+    #: apart fully shut), with the camera's noise. Objects detected under
+    #: `pinch_size_m`; anything it cannot reach jaws-down falls back to the
+    #: learned pick. `pinch_grip`: "along" | "across" the object's long side.
+    #: ON since 2026-09-28, for objects under 3.5 cm (butts, caps), fast:
+    #: 96 moss-yard seeds 838 v 784 in the bin (paired +0.56 +- 0.15 per seed,
+    #: +0.71 / +0.33 / +0.50 / +0.71 per quarter); butts kept 63 v 16, caps
+    #: 82 v 60. Under 8 cm it also took the cans (345 v 390 on 48); under 4.5
+    #: cm +0.26 +- 0.17 (blocks and paper do as well with the learned pick,
+    #: and a pinch costs seconds); at the first, slower timings (0.5 / 1.2 /
+    #: 1.0 s) 369 v 390; faster still (0.15 / 0.5 / 0.4 s) no better.
+    pinch_small: bool = True
+    pinch_size_m: float = 0.035
+    pinch_grip: str = "along"
+    pinch_look_s: float = 0.25
+    pinch_hover_m: float = 0.05
+    pinch_move_s: float = 0.7
+    pinch_close_s: float = 0.6
+    pinch_floor_m: float = 0.0015
+    #: ...from THIS close. The handover leaves small objects 0.43-0.52 m off
+    #: (measured), where the wrist camera cannot see them and the jaws cannot
+    #: point down at them (reach jaws-down ends ~0.38 m); the pinch first
+    #: drives in on the head camera's fix, arm deployed, to here.
+    pinch_range_m: float = 0.27
+    #: after the close, straight up this far before the lift swings away
+    pinch_rise_m: float = 0.06
+    #: the stow's swing round to the bin (`stow_turn_s`) for something the
+    #: PINCH picked up: most stow losses happen on that leg, and a pinched
+    #: butt was lost there 58 times in 96 runs. 3.2 s (the usual is 2.4):
+    #: 96 moss-yard seeds 878 v 838 in the bin (paired +0.42 +- 0.15, +0.46 /
+    #: +0.38 per half); butts kept 43 v 26 on the first 48. Slowing the swing
+    #: for EVERYTHING instead cut stow losses as much but cost cans (+0.25 +-
+    #: 0.25). 4.0 s: +0.38 +- 0.25. None = the usual.
+    pinch_turn_s: float | None = 3.2
+    #: a head-camera fix further than this from the pinch's locked spot is
+    #: another object
+    pinch_lock_m: float = 0.06
+    pinch_approach_s: float = 5.0
     band_far_small_m: float = 0.28
     #: How long to spend nudging into the band before handing over anyway. A
     #: cap, not a target: a can the base cannot line up is still worth an
@@ -212,15 +255,32 @@ class TidyMossParams:
     band_mps: float = 0.12
     close_s: float = 1.0
     lift_s: float = 1.8
+    #: A GENTLER CARRY FOR THIN THINGS. A 4 mm card lying flat can only be
+    #: pinched by its edges, and in moss-yard (2026-09-28) it sat still in the
+    #: jaws, touching nothing but the pads, then left them in one tick at a
+    #: jerk of the carry — the lift ending, a change of leg in the swing: 19
+    #: card carries, 12 lost in the stow, 6 in the lift, 1 kept.
+    #: `carry_ease`: every lift and stow leg eases in and out (smoothstep)
+    #: instead of starting and stopping at full speed. ON since 2026-09-28:
+    #: 48 seeds 382 v 358 in the bin (paired +0.50 +- 0.22, +0.54 / +0.46 per
+    #: half); paper kept 37 v 26, cards lost in the lift 1 v 6. The card is
+    #: still not delivered. Carrying small objects twice as SLOWLY instead
+    #: lost (333 v 358; 337 with easing): the time costs more than it saves.
+    carry_ease: bool = True
     stow_s: float = 3.4
     #: How long the LEARNED stow is given before the loop falls back to
     #: opening the jaws. Its env runs 20 s episodes and it delivers in a
     #: median of ~120 control steps, so this is generous on purpose.
     stow_policy_s: float = 20.0
-    #: The three legs of the scripted route, in seconds.
-    stow_high_s: float = 2.0
-    stow_turn_s: float = 4.0
-    stow_down_s: float = 3.0
+    #: The three legs of the scripted route, in seconds. 0.6x the original
+    #: 2.0 / 4.0 / 3.0 (2026-09-28): the 9 s stow was a clock, not the arm,
+    #: and with the depth pick it was 24% of every run. moss-yard, 48 seeds x
+    #: 300 s: 359 v 334 in the bin, paired +0.52 +- 0.21 per seed (+0.67 /
+    #: +0.38 per half); objects lost during the stow 25% v 24%. 0.4x (3.6 s)
+    #: loses more (31%) and gains less (+0.42 +- 0.31, 24 seeds).
+    stow_high_s: float = 1.2
+    stow_turn_s: float = 2.4
+    stow_down_s: float = 1.8
     #: The stow releases when the arm has ARRIVED over the bin, not when its
     #: ramp's clock runs out — the same distinction `deploy` already makes,
     #: and for the same reason. MEASURED 2026-09-24: releasing on the clock
@@ -386,6 +446,32 @@ class TidyMossParams:
     #: stronger than one contact (held AND lifted clear), and this is the
     #: cheapest way to ask for the same thing from the room.
     grip_settle_s: float = 0.35
+    #: DON'T LIFT A SHALLOW GRIP (2026-09-28). The wrist depth camera's grip
+    #: fix (`Senses.target_obs["grip"]`, tool frame) says how deep the object
+    #: sits in the jaws, and it tracks the truth to a few mm. Traced over 303
+    #: carries in moss-yard: objects lost in the LIFT sat 4.2 cm from the tcp
+    #: at lift start (median), kept ones 1.6 cm — the jaws had closed on an
+    #: edge, and 12 cm cans fell 52 times in 119. |grip| > 3 cm flags 66/85
+    #: lift losses and 28/163 good carries. While it reads shallow the pick
+    #: policy keeps acting (it trained to re-grasp) instead of handing over;
+    #: after `grip_depth_wait_s` it lifts anyway, so the gate cannot stall.
+    #: It is also the pick env's OWN success test (`deep_grip_m` 0.035, which
+    #: the shipped pick trained under) — the brain used to lift on any grip.
+    #: moss-yard, 48 seeds x 300 s: 385 v 354 in the bin, paired +0.65 +-
+    #: 0.17 (seeds 0-23 +0.71 +- 0.21; fresh 24-47 +0.58 +- 0.27, halves
+    #: +0.08 / +1.08). 3.5 cm +0.38, 3 cm with no cap +0.67 (24 seeds).
+    #: None turns it off.
+    #: ONLY FOR OBJECTS BIG ENOUGH TO TWIST OUT (detected size >=
+    #: `grip_depth_min_size_m`). A 0.6 g butt in a 7 N grip cannot slip under
+    #: its own weight wherever it is held, and small objects READ shallow —
+    #: |grip| median 3.5 cm, 58% over 3 cm — so the gate only made them wait
+    #: out the timeout while the pick nudged them (butts kept 21 -> 4, found
+    #: by the MOSS pick session). 48 seeds: large-only 392 v 385 for gating
+    #: everything (+0.15 +- 0.13), v 354 ungated (+0.79 +- 0.15, halves
+    #: +0.67 / +0.92).
+    grip_depth_max_m: float | None = 0.030
+    grip_depth_wait_s: float = 2.0
+    grip_depth_min_size_m: float = 0.08
     #: How far apart the jaws must be for the grip to be a GRASP rather than
     #: a pinch. His can is 66 mm across, so jaws round it rest near 29 mm;
     #: MEASURED in the room, the pickup routinely ends with `holding` true at
@@ -613,9 +699,15 @@ class TidyMoss:
         self._drop_from: dict[str, float] | None = None
         self._carry_jaw: float | None = None
         self._fix_size: float | None = None
+        self._kin = None
+        self._pinch: dict | None = None
+        self._pinch_twist = (0.0, 0.0, 0.0)
+        self._pinched = False
         self._lift_z0: float | None = None
         self._low_since: float | None = None
         self._grip_from_t = 1e9
+        self._depth_block_t: float | None = None
+        self._depth_last_t = -1e9
         self._grip_ticks = 0
         self.state = "search"
         self._t0 = 0.0                      # when the current state began
@@ -713,6 +805,181 @@ class TidyMoss:
             return False
         return any(math.hypot(w[0] - wx, w[1] - wy) < self.p.same_can_m
                    for wx, wy, _t in self._written_off)
+
+    def _pinch_step(self, senses: Senses, t: float, since: float):
+        """One tick of the scripted pinch (`pinch_small`) -> (arm, note)."""
+        from ..robots.moss_pinch import MossKinematics
+        p = self.p
+        if self._kin is None:
+            self._kin = MossKinematics()
+        K = self._kin
+        here = {j: float((senses.arm or {}).get(j, v))
+                for j, v in zip(moss.ARM_JOINTS, moss.GRASP_POSE)}
+        jaw_now = float((senses.arm or {}).get(moss.GRIPPER_JOINT, 0.041))
+        pc = self._pinch
+        if pc is None or pc.get("t0") != self._t0:
+            pc = self._pinch = {"t0": self._t0, "phase": "approach", "since": since,
+                                "fixes": [], "yaws": [], "from": dict(here)}
+        tob = senses.target_obs or {}
+
+        def look():
+            g = tob.get("grip")
+            if g is not None:
+                pc["fixes"].append(K.object_in_base(here, jaw_now, g))
+                if tob.get("yaw") is not None:
+                    pc["yaws"].append(float(tob["yaw"]))
+
+        def ease(a):
+            a = min(1.0, max(0.0, a))
+            return a * a * (3.0 - 2.0 * a)
+
+        def blend(a_pose, b_pose, a):
+            k = ease(a)
+            return {j: (1.0 - k) * a_pose[j] + k * b_pose[j] for j in moss.ARM_JOINTS}
+
+        dt = since - pc["since"]
+        ph = pc["phase"]
+
+        def target():
+            """The target in the base frame: the head camera's fix while it
+            has one, then dead-reckoned by odometry — a flat thing slides
+            under the camera's near edge as the robot closes in, and 12 of 21
+            butt pinches stopped right there when this read the fix alone."""
+            # LOCKED to the object the pinch started on: as a small thing
+            # drops out of the head camera's view its fix jumps to the next
+            # toy it can see — 9 of 12 butt pinches drove toward an object
+            # 0.4-1.0 m away and gave up out of reach. A fix counts only
+            # within `pinch_lock_m` of the locked spot.
+            if self._fix is not None:
+                wf = self._world(self._fix)
+                w0 = pc.get("world")
+                if w0 is None or (wf is not None and math.hypot(
+                        wf[0] - w0[0], wf[1] - w0[1]) < p.pinch_lock_m):
+                    pc["world"] = wf or w0
+                    return self._fix
+            w, od = pc.get("world"), self._odom
+            if w is None or od is None:
+                return None
+            c, s_ = math.cos(-od[2]), math.sin(-od[2])
+            dx, dy = w[0] - od[0], w[1] - od[1]
+            return (dx * c - dy * s_, dx * s_ + dy * c)
+
+        if ph == "approach":
+            fx = target()
+            if fx is not None and float(fx[0]) > p.pinch_range_m and dt < p.pinch_approach_s:
+                self._pinch_twist = (p.band_mps, 0.0,
+                                     p.creep_kp * math.atan2(float(fx[1]), max(float(fx[0]), 1e-3)))
+                return {**pc["from"], moss.GRIPPER_JOINT: 0.041}, "pinch: closing in"
+            self._pinch_twist = (0.0, 0.0, 0.0)
+            pc.update(phase="look", since=since, from_=dict(here))
+            pc["from"] = dict(here)
+            return {**pc["from"], moss.GRIPPER_JOINT: 0.041}, "pinch: looking"
+        if ph == "look":
+            # HOVER FIRST, over the head camera's fix: from the deploy pose a
+            # flat thing 0.27 m off is outside the wrist camera's view (every
+            # butt in a 6-seed trace read nothing); from above it is not.
+            fx = target()
+            if fx is None:
+                self._to("creep", t)
+                return None, "pinch: lost it, learned pick"
+            obj = np.array([float(fx[0]), float(fx[1]), 0.0])
+            hover = obj + np.array([0.0, 0.0, p.pinch_hover_m + K.pad_half])
+            pose, res = K.solve(hover, here["wrist_roll"], here)
+            if res > 0.005:
+                self._to("creep", t)                      # out of jaws-down reach
+                return None, "pinch: out of reach, learned pick"
+            pc.update(phase="hover", since=since, obj=obj, roll=here["wrist_roll"],
+                      hover=hover, hover_pose=pose, fixes=[], yaws=[])
+            return {**pc["from"], moss.GRIPPER_JOINT: 0.041}, "pinch: hovering"
+        if ph == "hover":
+            a = dt / p.pinch_move_s
+            arm = blend(pc["from"], pc["hover_pose"], a)
+            if a >= 1.0:
+                pc.update(phase="settle", since=since, fixes=[], yaws=[])
+            return {**arm, moss.GRIPPER_JOINT: 0.041}, "pinch: over it"
+        if ph == "settle":
+            look()
+            if dt < p.pinch_look_s:
+                return {**pc["hover_pose"], moss.GRIPPER_JOINT: 0.041}, "pinch: looking down"
+            if not pc["fixes"]:
+                self._to("creep", t)                      # the wrist camera saw nothing
+                return None, "pinch: no fix, learned pick"
+            obj = np.mean(pc["fixes"], axis=0)
+            roll = pc["roll"]
+            if pc["yaws"]:
+                c = float(np.mean(np.cos(2 * np.array(pc["yaws"]))))
+                s = float(np.mean(np.sin(2 * np.array(pc["yaws"]))))
+                jaw_yaw = 0.5 * math.atan2(s, c) + (
+                    0.0 if p.pinch_grip == "along" else math.pi / 2)
+                roll = K.roll_for(pc["hover_pose"], jaw_yaw)
+            # the arm sags under its own weight: aim by where the pads REALLY
+            # are over where they were sent
+            sag = pc["hover"] - K.padmid(here, jaw_now)
+            over = np.array([obj[0], obj[1], pc["hover"][2]]) + sag
+            over_pose, _ = K.solve(over, roll, pc["hover_pose"])
+            grasp = np.array([obj[0], obj[1], K.pad_half + p.pinch_floor_m]) + sag
+            pose, res = K.solve(grasp, roll, over_pose)
+            if res > 0.005:
+                self._to("creep", t)
+                return None, "pinch: out of reach, learned pick"
+            pc.update(phase="align", since=since, over_pose=over_pose, grasp_pose=pose)
+            return {**pc["hover_pose"], moss.GRIPPER_JOINT: 0.041}, "pinch: lining up"
+        if ph == "align":
+            a = dt / (0.6 * p.pinch_move_s)
+            arm = blend(pc["hover_pose"], pc["over_pose"], a)
+            if a >= 1.0:
+                pc.update(phase="descend", since=since, hover_pose=pc["over_pose"])
+            return {**arm, moss.GRIPPER_JOINT: 0.041}, "pinch: lining up"
+        if ph == "descend":
+            a = dt / p.pinch_move_s
+            arm = blend(pc["hover_pose"], pc["grasp_pose"], a)
+            if a >= 1.0:
+                pc.update(phase="close", since=since)
+            return {**arm, moss.GRIPPER_JOINT: 0.041}, "pinch: going down"
+        if ph == "close":
+            a = ease(dt / p.pinch_close_s)
+            if dt < p.pinch_close_s:
+                return ({**pc["grasp_pose"], moss.GRIPPER_JOINT: 0.041 * (1.0 - a)},
+                        "pinch: closing")
+            if self._gripped_raw(senses):
+                # STRAIGHT UP FIRST. The lift swings toward LIFT_POSE at once,
+                # and a card pinched on its 4 mm edges was pulled out sideways:
+                # 72 card carries, 60 lost in the lift.
+                up = K.padmid(pc["grasp_pose"], 0.0) + np.array([0.0, 0.0, p.pinch_rise_m])
+                pose, _ = K.solve(up, pc["roll"], pc["grasp_pose"], jaw=0.0)
+                pc.update(phase="rise", since=since, rise_pose=pose)
+                return {**pc["grasp_pose"], moss.GRIPPER_JOINT: 0.0}, "pinch: got it, rising"
+            self._attempts += 1
+            if self._attempts >= p.max_retries:
+                self._give_up(t)
+            self._to("tuck", t)
+            return None, "pinch: missed"
+        if ph == "rise":
+            a = dt / p.pinch_move_s
+            arm = blend(pc["grasp_pose"], pc["rise_pose"], a)
+            if a < 1.0:
+                return {**arm, moss.GRIPPER_JOINT: 0.0}, "pinch: rising"
+            if self._gripped_raw(senses):
+                self._carry_from = dict(here)
+                self._policy_cmd = {**here, moss.GRIPPER_JOINT: 0.0}
+                self._to("lift", t)
+                self._pinched = True
+                return None, "pinch: got it"
+            self._attempts += 1
+            if self._attempts >= p.max_retries:
+                self._give_up(t)
+            self._to("tuck", t)
+            return None, "pinch: dropped it rising"
+        return None, "pinch"
+
+    @property
+    def pinch_target_world(self):
+        """The pinch's locked target, odometry frame (x, y, 0), or None —
+        what the wrist camera should be reporting on during a pinch."""
+        if self.state != "pinch" or not self._pinch:
+            return None
+        w = self._pinch.get("world")
+        return None if w is None else (float(w[0]), float(w[1]), 0.0)
 
     def _give_up(self, t: float) -> None:
         """Write the current target off, so `_see` stops offering it."""
@@ -996,6 +1263,10 @@ class TidyMoss:
         ep = (self._flags.get("pick") or {}).get("episode_s")
         return max(self.p.learned_window_s, float(ep)) if ep else self.p.learned_window_s
 
+    def _ease(self, k: float) -> float:
+        """`carry_ease`: smoothstep — zero speed at both ends of a leg."""
+        return k * k * (3.0 - 2.0 * k) if self.p.carry_ease else k
+
     def _grip_is_a_grasp(self, senses: Senses) -> bool:
         """Are the jaws AROUND the can, or shut past it? See `min_grasp_m`."""
         arm = senses.arm or {}
@@ -1006,6 +1277,26 @@ class TidyMoss:
                  and self._fix_size < self.p.small_object_m)
         return float(jaw) >= (self.p.min_grasp_small_m if small
                               else self.p.min_grasp_m)
+
+    def _grip_is_deep(self, senses: Senses) -> bool:
+        """Is the object deep in the jaws, by the wrist depth camera? See
+        `grip_depth_max_m`. Asked only while the handover's other tests pass;
+        a gap of more than a tick between asks is a new grip, so the wait
+        restarts. No reading (occluded, stale) is not evidence: allow it."""
+        lim, t = self.p.grip_depth_max_m, senses.t
+        if t - self._depth_last_t > 0.1:
+            self._depth_block_t = None
+        self._depth_last_t = t
+        g = (senses.target_obs or {}).get("grip")
+        small = (self._fix_size is not None
+                 and self._fix_size < self.p.grip_depth_min_size_m)
+        if lim is None or small or g is None or float(np.linalg.norm(
+                np.asarray(g, float)[:3])) <= lim:
+            self._depth_block_t = None
+            return True
+        if self._depth_block_t is None:
+            self._depth_block_t = t
+        return t - self._depth_block_t >= self.p.grip_depth_wait_s
 
     def _policy_step(self, senses: Senses, fix, task: str = "pick"):
         """Run one leg's learned skill, AT ITS OWN CONTROL RATE."""
@@ -1101,6 +1392,8 @@ class TidyMoss:
             self._carry_from = {j: float((self._policy_cmd or {}).get(j, v))
                                 for j, v in zip(moss.ARM_JOINTS, moss.GRASP_POSE)}
         k = min(1.0, max(0.0, since / max(seconds, 1e-3)))
+        if self.state in ("lift", "stow"):
+            k = self._ease(k)
         return {j: (1.0 - k) * self._carry_from[j] + k * v
                 for j, v in zip(moss.ARM_JOINTS, target)}
 
@@ -1131,6 +1424,8 @@ class TidyMoss:
                    for j in RETRACT_JOINTS)
 
     def _to(self, state: str, t: float) -> None:
+        if state in ("creep", "pinch", "search"):
+            self._pinched = False
         if (state == "creep" and self.state != "creep"
                 and self.p.pick_clean_start):
             self._act = np.zeros(moss.NUM_ACTIONS, np.float32)
@@ -1234,7 +1529,9 @@ class TidyMoss:
                 # had never been shown rather than a skill it lacked.
                 band = self._band_error(fix) if p.band_handover else 0.0
                 if band == 0.0 or since >= p.deploy_timeout_s + p.band_timeout_s:
-                    self._to("creep", t)
+                    small = (self._fix_size is not None
+                             and self._fix_size < p.pinch_size_m)
+                    self._to("pinch" if (p.pinch_small and small) else "creep", t)
                 else:
                     # Close the loop on the ONE variable the next leg's
                     # competence depends on. Backing off is as necessary as
@@ -1245,6 +1542,11 @@ class TidyMoss:
                     note = (f"deploy: lining up, can {x:.2f} m "
                             f"-> [{moss.PICK_HANDOVER_BOX[0]:.2f}, "
                             f"{moss.PICK_HANDOVER_BOX[1]:.2f}]")
+
+        elif self.state == "pinch":
+            self._pinch_twist = (0.0, 0.0, 0.0)
+            arm, note = self._pinch_step(senses, t, since)
+            twist = self._pinch_twist
 
         elif self.state == "creep" and self._sess is not None:
             # THE LEARNED SKILL drives here: base and arm together, until it
@@ -1261,6 +1563,7 @@ class TidyMoss:
                 self._to("tuck", t)
             elif (self._gripped(senses) and self._grip_held_for(senses)
                   and self._grip_is_a_grasp(senses)
+                  and self._grip_is_deep(senses)
                   and (not p.lift_needs_live_contact
                        or self._gripped_raw(senses))):
                 self._carry_from = (
@@ -1405,8 +1708,10 @@ class TidyMoss:
             # waypoints and opened at the end, this delivers 6 of 6 in the
             # stow env, where the straight ramp delivers 0 of 10.
             drop_pose = ME.STOW_RELEASE_HIGH if p.release_high else ME.STOW_INSIDE
+            turn_s = (p.pinch_turn_s if (self._pinched and p.pinch_turn_s)
+                      else p.stow_turn_s)
             legs = ((ME.STOW_HIGH, p.stow_high_s),
-                    (ME.STOW_TURNED, p.stow_turn_s),
+                    (ME.STOW_TURNED, turn_s),
                     (drop_pose, p.stow_down_s))
             t_end = 0.0
             arm = None
@@ -1416,9 +1721,8 @@ class TidyMoss:
                             (pose, dur)):
                         self._leg_i = legs.index((pose, dur))
                         self._leg_from = dict(self._carry_from or {})
-                    arm = {j: (1.0 - min(1.0, (since - t_end) / dur))
-                           * self._leg_from.get(j, v) + min(
-                               1.0, (since - t_end) / dur) * v
+                    k = self._ease(min(1.0, (since - t_end) / dur))
+                    arm = {j: (1.0 - k) * self._leg_from.get(j, v) + k * v
                            for j, v in zip(moss.ARM_JOINTS, pose)}
                     break
                 t_end += dur

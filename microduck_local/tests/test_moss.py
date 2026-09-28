@@ -2117,6 +2117,24 @@ def test_a_small_object_can_be_lifted_with_the_jaws_nearly_shut():
     assert not b._grip_is_a_grasp(sn)
 
 
+def test_the_carry_eases_in_and_out_of_every_leg():
+    """A card held by its 4 mm edges sat still in the jaws and left them in
+    one tick at a jerk of the carry. Easing every lift and stow leg
+    (smoothstep: zero speed at both ends) put 382 objects in the bin over 48
+    yard seeds against 358. Checked on the stow leg the brain actually runs."""
+    from microduck_local.brain.tidy_moss import TidyMoss
+
+    b = TidyMoss()
+    assert b.p.carry_ease
+    assert b._ease(0.0) == 0.0 and b._ease(1.0) == 1.0 and b._ease(0.5) == 0.5
+    assert b._ease(0.1) < 0.05                           # starts gently
+    b.state = "stow"
+    b._carry_from = {j: 0.0 for j in moss.ARM_JOINTS}
+    target = tuple(1.0 for _ in moss.ARM_JOINTS)
+    early = b._ramp(target, 0.1, 1.0)
+    assert all(v < 0.05 for v in early.values())         # a linear ramp: 0.1
+
+
 def test_the_base_lines_up_for_the_pick_at_twice_the_old_speed():
     """Deploy took 26% of every yard run, and the arm was not what took it:
     it reaches the grasp pose in 1.2 s, then the base crept into the handover
@@ -2212,7 +2230,8 @@ def test_a_sphere_counts_as_picked_only_through_its_centre(monkeypatch):
     env.reset(seed=0)
     assert env.sphere_centre_m == 0.016
     m, d = env.model, env.data
-    # jaw at 10 mm, where the pad midpoint sits ~15 mm off the tool point
+    # ONE finger moved (not both, as the tied jaw would): the pad midpoint
+    # then sits off the tool point, so the two references are told apart
     d.qpos[m.joint(moss.GRIPPER_JOINT).qposadr[0]] = 0.010
     mujoco.mj_forward(m, d)
     mid = (d.geom_xpos[m.geom("pad_left").id]

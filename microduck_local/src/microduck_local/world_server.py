@@ -610,7 +610,32 @@ class WorldState:
             d._moss_sensors = ts
         if ts is False:
             return None
-        ts.tick(w.data, d.driver, ts.candidates)
+        # which object: during a scripted pinch, the one the brain is going
+        # for (its fix, base frame) — the pinch aims at what the camera reports
+        hint = None
+        brain = self.brains.get(d.id)
+        fix = getattr(brain, "_fix", None)
+        if getattr(brain, "state", None) == "pinch":
+            locked = getattr(brain, "pinch_target_world", None)
+            if locked is not None:
+                # the pinch's LOCKED spot, in the brain's odometry frame —
+                # the head camera's fix jumps to another toy as a small thing
+                # leaves its view, and aimed the wrist camera there too
+                ox, oy, oyaw = locked
+                x, y, yaw = d.driver.pose(w.data)
+                bo = brain._odom
+                if bo is not None:
+                    c0, s0 = math.cos(-bo[2]), math.sin(-bo[2])
+                    bx = (ox - bo[0]) * c0 - (oy - bo[1]) * s0
+                    by = (ox - bo[0]) * s0 + (oy - bo[1]) * c0
+                    c, s = math.cos(yaw), math.sin(yaw)
+                    hint = (x + bx * c - by * s, y + bx * s + by * c)
+            elif fix is not None:
+                x, y, yaw = d.driver.pose(w.data)
+                c, s = math.cos(yaw), math.sin(yaw)
+                hint = (x + float(fix[0]) * c - float(fix[1]) * s,
+                        y + float(fix[0]) * s + float(fix[1]) * c)
+        ts.tick(w.data, d.driver, ts.candidates, hint=hint)
         return ts.read()
 
     def drive(self, cmd: np.ndarray, mode: str) -> None:
