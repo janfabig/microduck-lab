@@ -105,7 +105,13 @@ from .runtime import REGISTRY, Brain, Intent, Senses  # noqa: F401
 #: 0.22-0.28/0.28-0.34/0.36-0.42 m against ad9876's 65/75/93%, card close in
 #: 8/11 against 2/11, no dragging (-5.9 cm). moss-yard, 6 seeds x 300 s,
 #: handover 0.41 m: 19/48 against 16/48. Reversible: "teach-moss_pick-ad9876".
-SHIPPED_RUN = "teach-moss_pick-478dad"
+#: 2026-09-28: -> the pick that sees its own grip (MOSS_PICK_GRIP, stage 6 of
+#: 3d2aa6: from scratch, the depth fix in the tool frame, base free, 15 s to
+#: re-grasp, yard handover starts, deep grips). moss-yard 48 seeds with the
+#: small-object grasp fix: 358 v 281 for 478dad (paired +1.60 +- 0.27 per
+#: seed, +1.67 / +1.54 per half); held-out yard states in the env 121/150 v
+#: 86. Reversible: "teach-moss_pick-478dad".
+SHIPPED_RUN = "teach-moss_pick_grip-3d2aa6-s6"
 #: One trained policy per LEG of the loop, each under `moss.CONTRACT_ID` —
 #: the three envs share one 32-slot observation and one 8-action layout, so a
 #: session is interchangeable and only the state that drives it differs. A leg
@@ -389,6 +395,17 @@ class TidyMossParams:
     #: 27-29 mm — sees a finger position it has never seen and opens within
     #: 0.1 s, which is 0 of 9 cans in the room against 9/12 in its own env.
     min_grasp_m: float = 0.020
+    #: ...but that is a CAN's number. A cap, block or card is thin enough
+    #: that jaws really round it sit below 20 mm, so the rule read every
+    #: grasp of one as a pinch and never lifted: in moss-yard (2026-09-27)
+    #: pick attempts reached a lift for 0% of caps, paper and butts, 6% of
+    #: cards and 10% of blocks, while the pick env, from the SAME handover
+    #: states, picked caps 88%, blocks 79%, cards 43%. For an object the
+    #: detector sizes under `small_object_m`, this is the floor instead.
+    #: 0 since 2026-09-28: 48 moss-yard seeds, 281 v 225 in the bin (paired
+    #: +1.17 +- 0.23 per seed, +0.96 / +1.38 per half); paper 0 -> 28 kept,
+    #: blocks 28, caps 5, cards 2. Both pads on it is still required.
+    min_grasp_small_m: float = 0.0
     #: How far a detection may sit from the can being tracked and still be
     #: believed to BE it. Wide enough for a fix that has drifted while the
     #: robot drove, narrow enough to reject a different can — the ones that
@@ -985,7 +1002,10 @@ class TidyMoss:
         jaw = arm.get(moss.GRIPPER_JOINT)
         if jaw is None:
             return True                  # no channel to judge by; allow it
-        return float(jaw) >= self.p.min_grasp_m
+        small = (self._fix_size is not None
+                 and self._fix_size < self.p.small_object_m)
+        return float(jaw) >= (self.p.min_grasp_small_m if small
+                              else self.p.min_grasp_m)
 
     def _policy_step(self, senses: Senses, fix, task: str = "pick"):
         """Run one leg's learned skill, AT ITS OWN CONTROL RATE."""

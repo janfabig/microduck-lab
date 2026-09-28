@@ -2098,6 +2098,25 @@ def test_the_pick_runs_at_its_trained_25_hz_in_the_brain():
     assert runs == 5, runs                            # 25 Hz, not 50
 
 
+def test_a_small_object_can_be_lifted_with_the_jaws_nearly_shut():
+    """`min_grasp_m` (20 mm) is a CAN's number: jaws round a cap, block or
+    card sit below it, so every grasp of one read as a pinch and the brain
+    never lifted — caps, paper and butts reached a lift 0% of the time in the
+    yard. For an object the detector sizes as small the floor is 0 (48 yard
+    seeds: 281 v 225 in the bin); a big one keeps the pinch guard."""
+    from microduck_local.brain.runtime import Senses
+    from microduck_local.brain.tidy_moss import TidyMoss
+
+    b = TidyMoss()
+    arm = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    arm[moss.GRIPPER_JOINT] = 0.006
+    sn = Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=arm)
+    b._fix_size = 0.03                              # a cap
+    assert b._grip_is_a_grasp(sn)
+    b._fix_size = 0.12                              # a can: 6 mm is a pinch
+    assert not b._grip_is_a_grasp(sn)
+
+
 def test_the_base_lines_up_for_the_pick_at_twice_the_old_speed():
     """Deploy took 26% of every yard run, and the arm was not what took it:
     it reaches the grasp pose in 1.2 s, then the base crept into the handover

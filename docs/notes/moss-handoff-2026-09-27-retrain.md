@@ -41,3 +41,17 @@ travel whatever its outcome.
   +0.73 +- 0.29 (+0.96 / +0.50 per half)** — the first bin gain since the 25 Hz fix. 0.18 is
   no better (-0.12 +- 0.30 v 0.12); `band_timeout_s` 1.0 instead is worse (77 v 94 on 24).
   Now the default, with a test that fails at 0.06.
+
+## Shipped 2026-09-28: the small-object grasp fix and the depth-camera pick
+
+48 moss-yard seeds x 300 s, paired on the same seeds, objects in the bin:
+478dad 190 -> + `band_mps` 0.12: 225 -> + `min_grasp_small_m` 0 (a small object may be lifted
+with the jaws below 20 mm; paper 0 -> 28 kept, caps 5, blocks 28): **281** (+1.17 +- 0.23) ->
++ `teach-moss_pick_grip-3d2aa6-s6`: **358** (+1.60 +- 0.27 v 281, +1.67 / +1.54 per half).
+The new pick (MOSS_PICK_GRIP, from scratch, six gated stages: 20/20/20/20/19 of 20) sees the
+object in its jaws (grip_xyz), trains base-free with 15 s to re-grasp, from yard handover
+states, deep grips only. Held-out yard states in the env: 121/150 v 478dad 86. Balls kept 47
+(3 lost) v 28 (27 lost); caps 28, butts 24. Weak spot: cans lost in the lift (74 of 200).
+Stage-1 lesson: from scratch, 478dad's locked base and randomised wrist stop the first grab
+(8/20 and 14/20 v 19/20 plain; 4/20 with all of them; every penalty on: 0/20).
+Keep-the-arm-out between retries lost again with the faster alignment (216 v 225): removed.
