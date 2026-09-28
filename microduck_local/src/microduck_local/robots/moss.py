@@ -1015,6 +1015,13 @@ OBS_SPARE = slice(31, 32)
 #: pair to four places. A leg trained without the flag sees those duplicates
 #: as before; one trained with it sees the grip there. The run records which.
 OBS_GRIP = (6, 13)
+#: THE GRIP IN FULL (`grip_xyz`): where the object sits in the TOOL frame —
+#: x, y across the jaws, z along the approach, m — and 1 when that depth fix
+#: is fresh; (0, 0, 0.15, 0) when not. Whether it is CENTRED between the jaws
+#: is the part a distance throws away. The two duplicate jaw slots plus the
+#: base twist (22, 23), which says nothing to a pick that trains with its
+#: base locked — so only for a leg trained from scratch with the flag.
+OBS_GRIP_XYZ = (6, 13, 22, 23)
 #: 32 = 28 used + 4 reserved.
 OBS_DIM = 32
 #: Five arm targets, ONE gripper command, and the base twist.
@@ -2004,13 +2011,15 @@ class MossBody(BodyBase):
         duplicate jaw slots (`OBS_GRIP`) of a donor that had not."""
         import json as _json
         from pathlib import Path as _P
-        if not env_kwargs.get("publish_grip"):
-            return []
         try:
             kw = _json.loads((_P(donor_dir) / "run.json").read_text()
                              ).get("env_kwargs") or {}
         except (OSError, ValueError):
             kw = {}
+        if env_kwargs.get("grip_xyz") and not kw.get("grip_xyz"):
+            return list(OBS_GRIP_XYZ)
+        if not env_kwargs.get("publish_grip"):
+            return []
         return [] if kw.get("publish_grip") else list(OBS_GRIP)
 
     def train_env_kwargs(self, args) -> dict:
@@ -2089,6 +2098,9 @@ class MossBody(BodyBase):
             out["publish_grip"] = _b("MICRODUCK_MOSS_GRIP_OBS")
             out["handover_states"] = _b("MICRODUCK_MOSS_HANDOVER_STATES")
             out["ball_frac"] = _f("MICRODUCK_MOSS_BALL_FRAC")
+            out["grip_xyz"] = _b("MICRODUCK_MOSS_GRIP_XYZ")
+            out["handover_frac"] = _f("MICRODUCK_MOSS_HANDOVER_FRAC", 1.0)
+            out["max_episode_s"] = _f("MICRODUCK_MOSS_PICK_EPISODE_S", 8.0)
         if task == "stow":
             # The stow leg's own knobs. Same rule as the pick's: read the
             # ENVIRONMENT here so the lab's in-process preview shows the same

@@ -632,6 +632,91 @@ def test_ball_frac_makes_balls_common_and_changes_nothing_at_zero(monkeypatch):
     assert registry()["moss"].train_env_kwargs(NS(task="pick"))["ball_frac"] == 0.5
 
 
+def test_the_full_grip_reaches_the_pick_the_same_way_in_env_and_brain():
+    """`grip_xyz`: the depth fix in the TOOL frame (is the object centred
+    between the jaws, how deep) and a fresh flag in `moss.OBS_GRIP_XYZ`, or
+    (0, 0, GRIP_UNSEEN_M, 0) — in the env and in tidy_moss alike."""
+    from microduck_local.brain.runtime import Senses
+    from microduck_local.brain.tidy_moss import TidyMoss
+    from microduck_local.robots import moss_env as ME
+
+    env = ME.MossPickEnv(seed=0, grip_xyz=True)
+    o, _ = env.reset(seed=0)
+    assert tuple(o[list(moss.OBS_GRIP_XYZ)]) == (0.0, 0.0, ME.GRIP_UNSEEN_M, 0.0)
+    env._grip, env._grip_t = np.array([0.01, -0.02, 0.03]), float(env.data.time)
+    assert tuple(np.round(env._obs()[list(moss.OBS_GRIP_XYZ)], 6)) == (0.01, -0.02, 0.03, 1.0)
+
+    b = TidyMoss()
+    b._flags["pick"] = {"grip_xyz": True}
+    arm = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    arm[moss.GRIPPER_JOINT] = 0.03
+    sn = Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=arm,
+                target_obs={"grip": (0.01, -0.02, 0.03)})
+    ob = b._policy_obs(sn, (0.3, 0.0), "pick")
+    assert tuple(np.round(ob[list(moss.OBS_GRIP_XYZ)], 6)) == (0.01, -0.02, 0.03, 1.0)
+    sn = Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=arm, target_obs={})
+    ob = b._policy_obs(sn, (0.3, 0.0), "pick")
+    assert tuple(ob[list(moss.OBS_GRIP_XYZ)]) == (0.0, 0.0, ME.GRIP_UNSEEN_M, 0.0)
+
+
+def test_handover_frac_mixes_yard_starts_with_the_rung_box():
+    """Stage 3 of the grip pick starts half its episodes from yard handover
+    states and half from the rung's box; at 1.0 every episode is a yard
+    state and no extra draw is made (8956a1's episodes replay)."""
+    from microduck_local.robots import moss_env as ME
+
+    half = ME.MossPickEnv(seed=0, pick_rung=2, handover_states=True, handover_frac=0.5)
+    n = sum(half.reset(seed=s)[0] is not None and half._hs is not None for s in range(60))
+    assert 18 <= n <= 42, n
+    full = ME.MossPickEnv(seed=0, pick_rung=2, handover_states=True)
+    assert all(full.reset(seed=s)[0] is not None and full._hs is not None for s in range(10))
+
+
+def test_the_brain_gives_a_pick_the_episode_it_trained_in(tmp_path):
+    """A pick trained in 15 s episodes, where a missed grasp does not end
+    the episode, must not be cut off at 8 s and sent to tuck — that
+    redeploy cycle is 12 s a time and half of every yard run. Runs without
+    the record keep 8 s."""
+    import json as _json
+
+    from microduck_local.brain.tidy_moss import TidyMoss
+    from microduck_local.robots import moss_env as ME
+
+    run = tmp_path / "r"
+    run.mkdir()
+    (run / "run.json").write_text(_json.dumps({"env_kwargs": {"max_episode_s": 15.0}}))
+    assert ME.episode_s_of(run / "policy.onnx") == 15.0
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "run.json").write_text(_json.dumps({"env_kwargs": {}}))
+    assert ME.episode_s_of(tmp_path / "old") is None
+    b = TidyMoss()
+    b._flags["pick"] = {"episode_s": 15.0}
+    assert b._pick_window_s() == 15.0
+    b._flags["pick"] = {"episode_s": None}
+    assert b._pick_window_s() == b.p.learned_window_s == 8.0
+
+
+def test_the_grip_pick_recipe_is_found_and_ladders_into_the_yard(tmp_path):
+    """"pick with the depth camera" reaches MOSS_PICK_GRIP, whose last two
+    stages start from yard handover states; a warm start that turns
+    `grip_xyz` on over a donor without it passes all four slots through."""
+    import json as _json
+
+    from microduck_local.behaviors.core import match_behavior
+    from microduck_local.robots.registry import registry
+
+    b = match_behavior("pick with the depth camera", "moss")
+    assert b is not None and b.id == "moss_pick_grip"
+    assert [st.env.get("MICRODUCK_MOSS_HANDOVER_STATES") for st in b.curriculum] == [
+        None, None, "1", "1"]
+    assert match_behavior("pick up the can", "moss").id == "moss_pick"
+    donor = tmp_path / "d"
+    donor.mkdir()
+    (donor / "run.json").write_text(_json.dumps({"env_kwargs": {}}))
+    assert registry()["moss"].repurposed_obs_dims({"grip_xyz": True}, donor) == list(
+        moss.OBS_GRIP_XYZ)
+
+
 def test_every_moss_run_records_the_wrist_mount_it_trained_behind(tmp_path):
     """478dad trained on the retired mount and nothing recorded it, so it was
     scored on the new one with no warning (-4.4 points, 2026-09-27). Every

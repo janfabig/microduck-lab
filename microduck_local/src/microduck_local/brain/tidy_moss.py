@@ -535,6 +535,7 @@ class TidyMoss:
         for task, path in paths.items():
             fl = dict(ME.obs_env_kwargs(path))
             fl["base_lock"] = bool(ME.eval_env_kwargs(path).get("base_lock"))
+            fl["episode_s"] = ME.episode_s_of(path)
             msg = ME.wrist_mount_mismatch(path, f"the {task} leg ({path})")
             if msg:
                 warnings.warn(msg)
@@ -863,6 +864,12 @@ class TidyMoss:
         if (fl.get("publish_size") and o[moss.OBS_TARGET_SEEN] > 0
                 and tob.get("top") is not None):
             o[moss.OBS_SPARE] = float(tob["top"])
+        if fl.get("grip_xyz"):
+            # the depth fix in the TOOL frame, as `MossPickEnv._grip_xyz_obs`
+            g = tob.get("grip")
+            o[list(moss.OBS_GRIP_XYZ)] = (
+                (float(g[0]), float(g[1]), float(g[2]), 1.0) if g is not None
+                else (0.0, 0.0, ME.GRIP_UNSEEN_M, 0.0))
         if fl.get("publish_grip"):
             # the wrist depth camera's grip fix, as `MossPickEnv._grip_obs`
             # publishes it (`moss.OBS_GRIP`); `read()` already applied the
@@ -964,6 +971,13 @@ class TidyMoss:
     def _grip_held_for(self, senses: Senses) -> bool:
         """Has the current grip lasted `grip_settle_s`? See that parameter."""
         return (senses.t - self._grip_from_t) >= self.p.grip_settle_s
+
+    def _pick_window_s(self) -> float:
+        """How long the learned pick gets: the episode it TRAINED in when that
+        was longer than `learned_window_s` (a leg trained to recover and
+        re-grasp in 15 s must not be cut off at 8 and sent to tuck)."""
+        ep = (self._flags.get("pick") or {}).get("episode_s")
+        return max(self.p.learned_window_s, float(ep)) if ep else self.p.learned_window_s
 
     def _grip_is_a_grasp(self, senses: Senses) -> bool:
         """Are the jaws AROUND the can, or shut past it? See `min_grasp_m`."""
@@ -1220,7 +1234,7 @@ class TidyMoss:
             # the policy was trained through that (its `target_seen` slot
             # goes to zero and it keeps acting). So the learned branch runs
             # on the last fix and only gives up on the clock.
-            if self._fix is None or since > p.learned_window_s:
+            if self._fix is None or since > self._pick_window_s():
                 self._attempts += 1
                 if self._attempts >= p.max_retries:
                     self._give_up(t)

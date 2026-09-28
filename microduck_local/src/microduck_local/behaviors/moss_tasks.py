@@ -12,6 +12,8 @@ evaluates. `robots/moss_env.MossPickEnv` owns the reward, and `_env_owned`
 says so at a glance.
 """
 
+import dataclasses
+
 from .core import *  # noqa: F401,F403 — the package's namespace cascade
 from .core import Behavior, CurriculumStage, RewardTerm, _register
 
@@ -124,6 +126,61 @@ MOSS_PICK = Behavior(
 
 
 _register(MOSS_PICK)
+
+
+#: THE PICK THAT CAN SEE ITS OWN GRIP (2026-09-27). Trained from scratch, not
+#: fine-tuned: its inputs mean something new. Four things differ from
+#: MOSS_PICK, each measured first:
+#:   * `grip_xyz` — the wrist depth camera's fix of the object in the TOOL
+#:     frame (is it centred between the jaws, and how deep). A distance alone
+#:     (8956a1) improved picks in the env and not the bin.
+#:   * yard handover states in the last two stages — the yard's fingertip
+#:     grips come from the states it hands the pick (9/24 settled grips v 3/43
+#:     from the env's spawns).
+#:   * `deep_grip_m` 0.035 — only a grip the carry survives counts.
+#:   * 15 s episodes — a missed grasp does not end the episode, so it learns
+#:     to re-grasp with the arm out instead of the brain tucking and
+#:     redeploying (12 s a time, half of every yard run).
+MOSS_PICK_GRIP = dataclasses.replace(
+    MOSS_PICK,
+    id="moss_pick_grip",
+    emoji="🫳",
+    title="Pick with the depth camera (MOSS)",
+    description="The pick, trained from scratch with the wrist depth camera's "
+                "view of where the object sits in its jaws, from the yard's "
+                "real handover states, long enough to re-grasp.",
+    keywords=("pick with the depth camera", "grip-aware pick",
+              "pick it up by feel"),
+    suggest="pick with the depth camera",
+    episode_s=15.0,
+    curriculum=(
+        CurriculumStage(
+            label="jaws around it", steps=900_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "0"},
+            detail="The object between the pads: what closing does, and what "
+                   "the depth camera shows when it is centred."),
+        CurriculumStage(
+            label="just out of reach", steps=700_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "1"},
+            detail="A few centimetres of reaching before the grip."),
+        CurriculumStage(
+            label="half from the yard", steps=1_500_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "2",
+                 "MICRODUCK_MOSS_HANDOVER_STATES": "1",
+                 "MICRODUCK_MOSS_HANDOVER_FRAC": "0.5"},
+            detail="The brain's handover distance, and half the episodes "
+                   "starting exactly where moss-yard hands over."),
+        CurriculumStage(
+            label="the yard's handovers", steps=1_500_000,
+            env={"MICRODUCK_MOSS_PICK_RUNG": "2",
+                 "MICRODUCK_MOSS_HANDOVER_STATES": "1",
+                 "MICRODUCK_MOSS_HANDOVER_FRAC": "1.0"},
+            detail="Every episode from a real yard handover state."),
+    ),
+)
+
+
+_register(MOSS_PICK_GRIP)
 
 
 MOSS_APPROACH = Behavior(

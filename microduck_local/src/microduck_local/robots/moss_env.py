@@ -1035,7 +1035,7 @@ BAND_Y = 0.30
 #: A flag that changes the OBSERVATION belongs here; one that changes only the
 #: reward (jaw_align, can_topple, gap_tcp) does not.
 OBS_FLAGS = ("publish_attitude", "publish_size", "publish_proximity",
-             "publish_grip")
+             "publish_grip", "grip_xyz")
 #: ...and the flags that change the DYNAMICS a policy trained under. Not the
 #: observation, so not in OBS_FLAGS, but just as fatal to get wrong: a policy
 #: trained with `base_lock` learns its base outputs are no-ops and leaves them
@@ -1122,6 +1122,22 @@ def mount_mismatch_message(trained: int, who: str = "this policy") -> str:
     return (f"{who} trained behind wrist-camera mount {trained}; the model "
             f"carries mount {moss.ARM_CAMERA_MOUNT} (moss.ARM_CAMERA_MOUNT), so "
             "its wrist slots 26 and 28-30 are not the readings it learned")
+
+
+def episode_s_of(policy_or_run) -> float | None:
+    """The pick episode a run trained in (`max_episode_s`), or None when its
+    run.json does not record one (every run before 2026-09-27: 8 s)."""
+    p = Path(policy_or_run)
+    for cand in (p, p.parent, p.parent.parent):
+        meta = cand / "run.json"
+        if meta.is_file():
+            try:
+                kw = json.loads(meta.read_text()).get("env_kwargs") or {}
+            except (OSError, ValueError):
+                return None
+            v = kw.get("max_episode_s")
+            return float(v) if v else None
+    return None
 
 
 def eval_env_kwargs(policy_or_run) -> dict:
@@ -1230,6 +1246,8 @@ class MossPickEnv(gym.Env):
         publish_grip: bool = False,
         handover_states: bool | None = None,
         ball_frac: float | None = None,
+        grip_xyz: bool = False,
+        handover_frac: float = 1.0,
     ):
         #: The wrist mount the policy behind this env TRAINED on, when the
         #: caller knows it (`arm_camera_mount_of`). The model always carries
@@ -1265,6 +1283,11 @@ class MossPickEnv(gym.Env):
         #: The wrist depth camera's grip fix in `moss.OBS_GRIP` (see there).
         self.publish_grip = bool(publish_grip)
         self.ball_frac = float(BALL_FRAC if ball_frac is None else ball_frac)
+        #: the grip IN FULL — tool-frame x, y, z and fresh (`moss.OBS_GRIP_XYZ`)
+        self.grip_xyz = bool(grip_xyz)
+        #: the share of episodes started from a yard handover state when
+        #: `handover_states` is on; the rest spawn from the rung's box
+        self.handover_frac = float(handover_frac)
         self._grip = None
         self._grip_t = -1e9
         self.handover_states = bool(HANDOVER_STATES if handover_states is None
@@ -1576,7 +1599,9 @@ class MossPickEnv(gym.Env):
         training on litter instead of on one particular can.
         """
         self._hs = None
-        if self._hstates is not None:
+        if self._hstates is not None and (
+                self.handover_frac >= 1.0
+                or self.rng.random() < self.handover_frac):
             self._hs = self._hstates[int(self.rng.integers(len(self._hstates)))]
             self.prop = handover_prop(self._hs)
             self._bind_model()
@@ -2171,7 +2196,8 @@ class MossPickEnv(gym.Env):
         # KEEP THE RANGE. It was computed above only to decide visibility.
         self._arm_rng = max(0.0, rng + self.rng.normal(0.0, ARM_DET_RANGE_NOISE))
         self._arm_rng_t = t
-        if getattr(self, "publish_grip", False) and self._arm_sees():
+        if ((getattr(self, "publish_grip", False)
+             or getattr(self, "grip_xyz", False)) and self._arm_sees()):
             # A DEPTH camera's fix is a 3-D point, so it says where the object
             # sits IN THE JAWS — the tool frame — which the range cannot: over
             # 122 yard lifts it read 120-124 mm (median) whether the grip was
@@ -2228,6 +2254,15 @@ class MossPickEnv(gym.Env):
                 and (float(self.data.time) - self._grip_t) < ARM_STALE_S):
             return float(np.linalg.norm(self._grip)), 1.0
         return GRIP_UNSEEN_M, 0.0
+
+    def _grip_xyz_obs(self) -> tuple[float, float, float, float]:
+        """`moss.OBS_GRIP_XYZ`: the depth fix in the tool frame and 1 when
+        fresh, else (0, 0, `GRIP_UNSEEN_M`, 0)."""
+        if (self._grip is not None
+                and (float(self.data.time) - self._grip_t) < ARM_STALE_S):
+            g = self._grip
+            return float(g[0]), float(g[1]), float(g[2]), 1.0
+        return 0.0, 0.0, GRIP_UNSEEN_M, 0.0
 
     def _pose_handover_state(self, hs: dict) -> None:
         """Put the arm and the object where the yard had them at `creep`:
@@ -2418,6 +2453,8 @@ class MossPickEnv(gym.Env):
             o[moss.OBS_SPARE] = top
         if self.publish_grip:
             o[list(moss.OBS_GRIP)] = self._grip_obs()
+        if self.grip_xyz:
+            o[list(moss.OBS_GRIP_XYZ)] = self._grip_xyz_obs()
         return o
 
     def _true_attitude(self) -> tuple[float, float, float]:
