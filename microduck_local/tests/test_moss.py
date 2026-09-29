@@ -2160,16 +2160,13 @@ def test_the_base_lines_up_for_the_pick_at_twice_the_old_speed():
     assert it.twist[0] == pytest.approx(0.12)
 
 
-def test_a_can_dropped_on_the_lift_is_noticed_and_the_arm_goes_straight_home():
-    """8 of 10 drops in the yard happen at the start of the carry and the
-    empty-jaw check only ran in `stow`, so the brain noticed 2.8 s late and
-    then took the fold's 7-12 s route round a bin the arm was nowhere near.
-    Now: noticed in LIFT, and home by the straight, rate-limited, leashed
-    path."""
+def _drop_on_the_lift(**kw):
+    import dataclasses
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
 
     b = TidyMoss()
+    b.p = dataclasses.replace(b.p, **kw)
     arm = dict(zip(moss.ARM_JOINTS, moss.LIFT_POSE))
     arm[moss.GRIPPER_JOINT] = 0.02
     b._to("lift", 0.0)
@@ -2180,18 +2177,31 @@ def test_a_can_dropped_on_the_lift_is_noticed_and_the_arm_goes_straight_home():
                       holding=False))
     assert b.state == "tuck" and b._dropped, (b.state, t)
     assert t <= b.p.lift_drop_grace_s + b.p.stow_drop_grace_s + 0.2, t
-    tuck = dict(zip(moss.ARM_JOINTS, moss.tuck_pose()))
+    home = dict(zip(moss.ARM_JOINTS, b._rest()))
+    rate = b.p.motion_vmax if b.p.plan_routes else b.p.drop_tuck_rate
     q = dict(arm)
     for _ in range(25):                        # 0.5 s, the arm follows exactly
         t += 0.02
         it = b.step(Senses(t=t, odom=(0.0, 0.0, 0.0), speed=0.0, arm=dict(q),
                            holding=False))
         for j in moss.ARM_JOINTS:              # never faster than the rate
-            assert abs(it.arm[j] - q[j]) <= b.p.drop_tuck_rate * 0.02 + 1e-6
+            assert abs(it.arm[j] - q[j]) <= rate * 0.02 + 1e-6
             q[j] = it.arm[j]
     moved = sum(abs(q[j] - arm[j]) for j in moss.ARM_JOINTS)
-    assert moved > 0.0 and all(abs(q[j] - tuck[j]) <= abs(arm[j] - tuck[j])
+    assert moved > 0.0 and all(abs(q[j] - home[j]) <= abs(arm[j] - home[j]) + 1e-9
                                for j in moss.ARM_JOINTS)
+
+
+def test_a_can_dropped_on_the_lift_is_noticed_and_the_arm_goes_straight_home():
+    """8 of 10 drops in the yard happen at the start of the carry and the
+    empty-jaw check only ran in `stow`, so the brain noticed 2.8 s late and
+    then took the fold's 7-12 s route round a bin the arm was nowhere near.
+    Now: noticed in LIFT, and home — by a clear route to the rest pose
+    (`plan_routes`, the lift pose joins it by a straight clear segment), or
+    with routes off by the straight, rate-limited, leashed path to the old
+    tuck."""
+    _drop_on_the_lift()
+    _drop_on_the_lift(plan_routes=False, rest_pose=None)
 
 
 def test_a_valid_start_stow_episode_begins_with_the_object_in_the_jaws():

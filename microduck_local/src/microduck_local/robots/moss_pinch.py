@@ -65,6 +65,13 @@ class MossKinematics:
         return (self._to_base(self.d.site_xpos[self._tcp]),
                 self._rot_base(self.d.site_xmat[self._tcp]))
 
+    def body_in_base(self, arm: dict, jaw: float, body: str):
+        """(position, rotation) of a body of the arm — a camera — in the base
+        frame, for an arm pose."""
+        self._pose([float(arm[j]) for j in ARM], jaw)
+        b = self.m.body(body).id
+        return self._to_base(self.d.xpos[b]), self._rot_base(self.d.xmat[b])
+
     def object_in_base(self, arm: dict, jaw: float, grip) -> np.ndarray:
         """The wrist depth fix (object in the TOOL frame) in the base frame."""
         p, R = self.tool(arm, jaw)

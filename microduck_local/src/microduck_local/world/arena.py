@@ -2210,6 +2210,13 @@ class World:
                     d.lidar.maybe_scan(data, self.t)
                 if d.detector is not None:
                     d.detector.sample(data, self.t)
+                # A body's SECOND camera (MOSS's wrist): its frames were never
+                # taken — the /sim overlay drew its cone from the spec while
+                # `arm_detector.last` stayed None, so a brain scanning with it
+                # (`tidy_moss.wrist_scan`) read nothing for 48 seeds.
+                arm_det = d.sensors.get("arm_detector")
+                if arm_det is not None:
+                    arm_det.sample(data, self.t)
                 # The claw is a sense too (`sense_grip`): a driver-stepped
                 # body's grasp is physics, so "am I holding something" is
                 # READ each tick rather than remembered from an event.

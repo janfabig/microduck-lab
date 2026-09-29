@@ -53,15 +53,13 @@ import math
 import os
 import warnings
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
-
-from pathlib import Path
 
 from ..robots import moss
 from ..robots import moss_env as ME
 from .runtime import REGISTRY, Brain, Intent, Senses  # noqa: F401
-
 
 #: The run whose `policy.onnx` is the shipped pickup skill.
 #:
@@ -518,6 +516,85 @@ class TidyMossParams:
     #: MEASURED OFF: 0.4 s left the flick where it was (0.34 v 0.36 m/s) and
     #: knocked 14 objects out of the bin against 6 over the same 48 seeds.
     release_open_s: float = 0.0
+    #: THE REST POSE, AND HOW THE ARM GETS TO AND FROM IT (2026-09-28,
+    #: `brain/moss_motion.py`). Asked on /sim: the arm "clips through the box
+    #: going into the rest position" and "gets stuck as it sweeps out"; and
+    #: "the wrist camera just points down at the track — point it outwards
+    #: to scan". MEASURED, eight 7-minute yard runs, the arm's visible meshes
+    #: against the bin and hull: the old rest pose (`moss.tuck_pose()`) has
+    #: the gripper's mesh ON the bin's front wall, the sweep out (a straight
+    #: ramp) clipped 50% of its time and stalled 92 s, and the learned
+    #: approach pressed the rover at up to 292 N.
+    #: `rest_pose` was searched (320k poses) for: >= 15 mm between the
+    #: visible arm and the rover, nothing in the front camera's view, the
+    #: whole arm INSIDE THE CIRCLE THE CHASSIS SWEEPS TURNING IN PLACE (0.21
+    #: of the tracks' 0.222 m), high in front, and the most floor in the
+    #: WRIST camera's view that the front camera cannot see. The circle is
+    #: measured, not tidiness: the first pick reached 0.3 m out, and turning
+    #: to search beside a wall it caught the wall, was dragged to the pan
+    #: limit and pinned the robot there for two minutes. This one holds the
+    #: wrist camera 0.30 m up looking out to the LEFT (bearing +100 deg),
+    #: 24 deg below the horizon, >= 30 mm clear, and joins the grasp, release
+    #: and lift poses by STRAIGHT clear segments. None keeps the old tuck.
+    #: WHAT IT CAN ACTUALLY SEE, re-measured honestly 2026-09-28: 0.168 m^2
+    #: of floor — in the cone, inside the detector's 0.60 m range, and past
+    #: the 0.25 m self-reject — and ALL of it is floor the front camera cannot
+    #: see (that camera covers 4.65 m^2 and none of this strip). The cone
+    #: itself reaches 0.69 m^2, so three quarters of what it looks at is
+    #: beyond the range the detector reports; the original search scored floor
+    #: out to 1.5 m and paid 0.25 for the unreportable part, so it aimed too
+    #: flat. Re-searching on reportable floor alone (40k poses + refinement)
+    #: tops out at 0.279 m^2 — but every such pose aims 65 deg down, which is
+    #: the "just pointed at the track" this pose was asked to stop doing, and
+    #: the extra area buys nothing measurable (see `wrist_scan`). So the
+    #: outward aim is kept deliberately, not by oversight.
+    rest_pose: tuple[float, ...] | None = (-0.4472, -0.8663, 0.1402, 1.4805, -1.1788)
+    #: Every move to and from rest (sweep out, fold home, straight home after
+    #: a drop) by a route clear of the visible arm (`route_margin_m`), timed
+    #: minimum-jerk so the busiest joint peaks at `motion_vmax`, on a leash
+    #: of `motion_leash_rad`. Off: the old ramps and folds.
+    plan_routes: bool = True
+    route_margin_m: float = 0.010
+    motion_vmax: float = 1.2
+    motion_leash_rad: float = 0.10
+    #: Drive up to a can with the arm HELD at rest (the scripted approach)
+    #: instead of the learned approach, which drives AND moves the arm — it
+    #: was adopted because the arm could not reach the old tuck, and in the
+    #: room it pressed the arm into the hull and bin 72% of its time.
+    approach_arm_rest: bool = True
+    #: SCAN WITH THE WRIST CAMERA while the arm rests (search and approach):
+    #: what it sees goes into the same object memory as the front camera's
+    #: sightings, placed by the arm's own kinematics. The rest pose points it
+    #: out to the left at floor the front camera cannot see — beside the
+    #: robot, where small things drop out of the front camera's view as it
+    #: drives past.
+    #:
+    #: ON, AND A NULL ON THE MISSION — both, honestly. 48 moss-yard seeds of
+    #: 15 min, paired against the same arm motion without it: -0.04 ± 0.10
+    #: objects in the bin at 5 min, -0.04 ± 0.07 at 15 min. (The first such
+    #: battery came out IDENTICAL seed for seed, which is how we found that
+    #: the world never sampled this detector at all — the /sim overlay drew
+    #: its cone from the spec while `senses.arm_det` stayed None. `world/arena`
+    #: samples it now and `tests/test_moss_motion` asks the world for a frame.)
+    #: What it does deliver, instrumented over 3 seeds of 300 s: 92% of its
+    #: detections survive the filters, it CREATES 1-5 memory entries per run
+    #: against the front camera's 32-39, it is first to 1-5 of them by 2-94 s,
+    #: and 0-3 per run are objects the front camera never sees at all. It
+    #: cannot do more than that here because the arm only rests in
+    #: search/approach for ~10% of a run, and because the yard saturates
+    #: anyway (483-485 of 490 objects binned by 15 min either way). It is kept
+    #: on because the information is real and free, not because it scored.
+    #:
+    #: MEASURED OFF — scanning from ANY arm pose (a joint-speed gate instead
+    #: of the rest gate) trebles the points accepted (161-286 v 21-95) and
+    #: LOSES picks (10/10/8 v 9/12/10). The extra entries are phantoms: 5-8
+    #: per run are created during `lift`, where the camera is staring at the
+    #: object IN THE JAWS and the kinematics place it on the floor 0.3 m away.
+    #: The rest gate is what keeps the camera pointed at floor; it is not
+    #: conservatism.
+    wrist_scan: bool = True
+    #: How close to `rest_pose` (every joint, rad) counts as resting.
+    rest_tol_rad: float = 0.08
     tuck_s: float = 2.4
     #: THE LEARNED FOLD's budget. It takes ~190 control ticks (7.6 s) in its
     #: env; past this it hands on to search wherever the arm is.
@@ -707,6 +784,38 @@ def _shipped_policies() -> dict[str, str]:
     return found
 
 
+def _wrist_floor_band(pc, Rc, z: float = 0.03) -> tuple[float, float]:
+    """The near and far radius, m, of the floor the WRIST camera can actually
+    report, measured from the camera's own ground point.
+
+    The /sim map used to draw this as a full wedge from the camera out to the
+    detector's 0.60 m — which claims the floor right beside the robot, where
+    nothing is in the camera's VERTICAL view: aimed 24 deg down from 0.30 m
+    up, its nearest floor is 0.2-0.3 m away. Overstating a sensor's reach on
+    the map is how the wrist camera went 48 seeds looking like it worked while
+    the world never sampled it at all, so the map takes these from the pose.
+
+    The near edge is where the bottom of the vertical fan meets the floor, the
+    far edge the nearer of the top of the fan and the range sphere's cut.
+    """
+    vf = math.radians(moss.ARM_CAMERA_VFOV_DEG / 2)
+    R = float(moss.ARM_CAMERA_MAX_RANGE_M)
+    h = float(pc[2]) - z
+    out = []
+    for b in (-vf, vf):
+        v = np.array([math.cos(b), 0.0, math.sin(b)])
+        w = Rc @ v
+        if w[2] >= -1e-6 or h <= 0.0:       # that edge never reaches the floor
+            out.append(math.sqrt(max(R * R - h * h, 0.0)))
+            continue
+        s = h / -float(w[2])
+        out.append(float(np.hypot(*(w[:2] * s))) if s <= R
+                   else math.sqrt(max(R * R - h * h, 0.0)))
+    near, far = min(out), max(out)
+    far = min(far, math.sqrt(max(R * R - h * h, 0.0)))
+    return round(max(0.0, near), 3), round(max(near, far), 3)
+
+
 class TidyMoss:
     """MOSS's litter loop. `brain/runtime.Brain`'s protocol."""
 
@@ -822,6 +931,18 @@ class TidyMoss:
         self._carry_jaw: float | None = None
         self._fix_size: float | None = None
         self._kin = None
+        #: `moss_motion`: the clearance model (built on first use) and the
+        #: current state's planned move (None: not planned yet; False: no
+        #: clear route this time, the old branch runs).
+        self._clr = None
+        self._mv = None
+        self._adet_t: float | None = None
+        #: The wrist camera in the ODOM frame WHILE IT SCANS, for the map:
+        #: (x, y, heading of its view, near radius, far radius), or None. The
+        #: radii are the band of floor it can really report
+        #: (`_wrist_floor_band`) — the map must not draw reach the sensor
+        #: hasn't got.
+        self._wcam: tuple[float, float, float, float, float] | None = None
         self._pinch: dict | None = None
         self._release_from: float | None = None
         self._pinch_twist = (0.0, 0.0, 0.0)
@@ -919,6 +1040,7 @@ class TidyMoss:
             self._mem = ObjectMemory()
             self._patrol = Patrol(None, p.patrol_inset_m)
         self._map_room(senses)
+        self._scan_wrist(senses, t)
         # A delivered object leaves the memory with the delivery.
         if self._target_world is not None:
             self._mem_target = self._target_world
@@ -958,6 +1080,50 @@ class TidyMoss:
             cam = self._world((moss.CAMERA_POS[0], 0.0))
             if cam is not None:
                 self._cov.mark(cam, od[2], half, 0.15, p.cover_m, t)
+
+    def _at_rest(self, senses: Senses) -> bool:
+        arm = senses.arm or {}
+        return all(j in arm and abs(float(arm[j]) - v) < self.p.rest_tol_rad
+                   for j, v in zip(moss.ARM_JOINTS, self._rest()))
+
+    def _scan_wrist(self, senses: Senses, t: float) -> None:
+        """The wrist camera's sightings into the memory, while the arm rests
+        (`wrist_scan`)."""
+        self._wcam = None
+        frame = senses.arm_det
+        if (not self.p.wrist_scan or self.state not in ("search", "approach")
+                or self._odom is None or not self._at_rest(senses)):
+            return
+        if self._kin is None:
+            from ..robots.moss_pinch import MossKinematics
+            self._kin = MossKinematics()
+        pc, Rc = self._kin.body_in_base(senses.arm, 0.041, moss.ARM_CAMERA_BODY)
+        ax = Rc[:, 0]
+        near, far = _wrist_floor_band(pc, Rc)
+        self._wcam = (*(self._world((float(pc[0]), float(pc[1]))) or (0.0, 0.0)),
+                      self._odom[2] + math.atan2(float(ax[1]), float(ax[0])),
+                      near, far)
+        if frame is None or frame.t == self._adet_t:
+            return
+        self._adet_t = frame.t
+        pts = []
+        for det in frame.detections:
+            if det.cls != "toy":
+                continue
+            r = self._range(det)
+            ce = math.cos(det.elevation)
+            q = pc + Rc @ np.array([r * ce * math.cos(det.bearing),
+                                    r * ce * math.sin(det.bearing),
+                                    r * math.sin(det.elevation)])
+            # on the floor, and not on (or in) the robot itself
+            if q[2] > 0.20 or math.hypot(q[0], q[1]) < 0.25:
+                continue
+            w = self._world((float(q[0]), float(q[1])))
+            if w is not None:
+                size = 2.0 * r * math.tan(max(float(det.width), 1e-4) / 2.0)
+                pts.append((w[0], w[1], size, r))
+        if pts:
+            self._mem.observe(pts, t)
 
     def _map_room(self, senses: Senses) -> None:
         """The depth into the room map, and the work area it gives: the
@@ -1100,6 +1266,7 @@ class TidyMoss:
         return {
             "area": list(self._patrol.area) if self._patrol and self._patrol.area else None,
             "areaSrc": self._area_src,
+            "wcam": None if self._wcam is None else [round(v, 3) for v in self._wcam],
             "room": None if self._room is None else self._room.payload(),
             "rim": [list(w) for w in (self._patrol.waypoints if self._patrol else [])],
             "mem": [[round(e.x, 3), round(e.y, 3), round(e.size, 3), e.hits,
@@ -1765,6 +1932,40 @@ class TidyMoss:
         return Intent(twist=(0.0, 0.0, 0.0), arm=None,
                       note=f"{where}: dropped it — going back for it")
 
+    def _rest(self) -> tuple[float, ...]:
+        """Where the arm waits: `rest_pose`, or the old tuck without one."""
+        return (tuple(self.p.rest_pose) if self.p.rest_pose is not None
+                else moss.tuck_pose())
+
+    def _clearance(self):
+        if self._clr is None:
+            from .moss_motion import ArmClearance
+            if self._kin is None:
+                from ..robots.moss_pinch import MossKinematics
+                self._kin = MossKinematics()
+            self._clr = ArmClearance(self._kin)
+        return self._clr
+
+    def _move_to(self, goal, senses: Senses, since: float, hubs=()):
+        """A planned move from where the arm IS on this state's first tick to
+        `goal`: `(arm command, arrived)`, or None when no clear route exists
+        (then the state's old branch runs)."""
+        from .moss_motion import MinJerkRoute, RouteFollower
+        if self._mv is None:
+            if senses.arm is None:
+                return _pose(goal), False
+            q0 = [float(senses.arm.get(j, v)) for j, v in zip(moss.ARM_JOINTS, goal)]
+            r = self._clearance().route(q0, goal, hubs, self.p.route_margin_m)
+            self._mv = (False if r is None else RouteFollower(
+                MinJerkRoute(r, self.p.motion_vmax), self.p.motion_leash_rad))
+        if self._mv is False:
+            return None
+        q = self._mv.step(since, senses.arm)
+        return dict(zip(moss.ARM_JOINTS, (float(x) for x in q))), self._mv.done()
+
+    def _fold_hubs(self):
+        return (moss.LIFT_POSE, tuple(self.p.fold_route_wp), moss.RETRACT_WAYPOINT)
+
     def _fold_route(self, senses: Senses):
         """The scripted fold's route if this fold starts from the release
         pose it was planned for, else None (seeded once per tuck)."""
@@ -1785,7 +1986,7 @@ class TidyMoss:
         every joint that shapes the arm (`moss_env.RETRACT_JOINTS`)?"""
         from ..robots.moss_env import RETRACT_JOINTS, RETRACT_TOL_RAD
         arm = senses.arm or {}
-        tuck = dict(zip(moss.ARM_JOINTS, moss.tuck_pose()))
+        tuck = dict(zip(moss.ARM_JOINTS, self._rest()))
         return all(j in arm and abs(float(arm[j]) - tuck[j]) < RETRACT_TOL_RAD
                    for j in RETRACT_JOINTS)
 
@@ -1803,6 +2004,7 @@ class TidyMoss:
             self._lift_z0 = None
         self._low_since = None
         self._release_from = None
+        self._mv = None
         self.state, self._t0 = state, t
         self._fold_seeded = False
         self._route, self._route_tried = None, False
@@ -1843,8 +2045,10 @@ class TidyMoss:
         note = self.state
 
         if self.state == "search":
-            arm = self._ramp_from_here(moss.tuck_pose(), since,
-                                       p.tuck_ramp_s, senses)
+            mv = (self._move_to(self._rest(), senses, since, self._fold_hubs())
+                  if p.plan_routes else None)
+            arm = (mv[0] if mv is not None else
+                   self._ramp_from_here(self._rest(), since, p.tuck_ramp_s, senses))
             if fix is not None and seen is not None:
                 self._policy_cmd = None     # the next leg seeds its own pose
                 self._to("approach", t)
@@ -1861,6 +2065,13 @@ class TidyMoss:
                 x, y = fix
                 if x <= p.deploy_at:
                     self._to("deploy", t)
+                elif p.approach_arm_rest:
+                    twist = (p.approach_mps, 0.0,
+                             p.approach_kp * math.atan2(y, x))
+                    mv = (self._move_to(self._rest(), senses, since, self._fold_hubs())
+                          if p.plan_routes else None)
+                    arm = mv[0] if mv is not None else _pose(self._rest())
+                    note = f"approach: can {x:.2f} m ahead, arm at rest"
                 elif "approach" in self._sessions:
                     # THE LEARNED DRIVE. It holds the arm as well as the
                     # base, deliberately: the arm does not reach `TUCK_POSE`
@@ -1875,8 +2086,12 @@ class TidyMoss:
                     note = f"approach: can {x:.2f} m ahead, arm in"
 
         elif self.state == "deploy":
-            arm = {**self._ramp_from_here(moss.GRASP_POSE, since,
-                                          p.deploy_ramp_s, senses),
+            mv = (self._move_to(moss.GRASP_POSE, senses, since,
+                                (self._rest(), moss.LIFT_POSE))
+                  if p.plan_routes else None)
+            arm = {**(mv[0] if mv is not None else
+                      self._ramp_from_here(moss.GRASP_POSE, since,
+                                           p.deploy_ramp_s, senses)),
                    moss.GRIPPER_JOINT: 0.041}
             note = "deploy: jaws open at can height"
             self._policy_cmd = None
@@ -2185,6 +2400,23 @@ class TidyMoss:
                 self._target_world = None
                 self._fix = None
                 self._to("tuck", t)
+
+        elif (self.state == "tuck" and p.plan_routes and self._mv is not False
+              and (mv := self._move_to(self._rest(), senses, since,
+                                       self._fold_hubs())) is not None):
+            # HOME BY A CLEAR ROUTE (`moss_motion`): from wherever the arm is —
+            # after a delivery, a drop or a missed pick — straight to rest if
+            # that clears the visible arm, else through a hub; minimum-jerk,
+            # leashed. The folds below run only when no clear route exists.
+            arm, arrived = mv
+            arm[moss.GRIPPER_JOINT] = moss.MISSION_OPEN_M
+            note = "tuck: home by a clear route"
+            if (arrived and self._folded(senses)) or since >= p.fold_policy_s:
+                self._dropped = False
+                self._drop_from = None
+                self._route = None
+                self._policy_cmd = None
+                self._to("search", t)
 
         elif self.state == "tuck" and self._dropped:
             # STRAIGHT HOME after a drop, at the commanded joint rate, from

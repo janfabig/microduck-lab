@@ -55,6 +55,16 @@ export interface MossMap {
   /** Where the work area came from: its own depth, or the scenario. */
   areaSrc?: "sensed" | "given" | null;
   room?: RoomGrid | null;
+  /**
+   * The wrist camera while it scans at rest, and ONLY while it scans:
+   * [x, y, heading of its view, near radius, far radius]. The radii come from
+   * the robot (`tidy_moss._wrist_floor_band`) because the floor it can report
+   * is a BAND, not a wedge from the lens: aimed down from 0.30 m up, its
+   * nearest floor is ~0.21 m out and the detector's range cuts it off at
+   * ~0.54 m. Drawing the full wedge claimed the floor beside the tracks,
+   * which the camera cannot see.
+   */
+  wcam?: [number, number, number, number, number] | null;
   rim: [number, number][];
   mem: MemRow[];
   target: [number, number] | null;
@@ -65,6 +75,9 @@ export interface MossMap {
 }
 
 const W = 230;
+/** MOSS's wrist camera, `moss.ARM_CAMERA_HFOV_DEG` — the same 70 deg
+ *  `WRIST_CAMERAS` renders its inset with. */
+const WRIST_HFOV_DEG = 70;
 const TEAL = "#43c2b8";
 const AMBER = "#f2b632";
 const RED = "#e5534b";
@@ -95,6 +108,24 @@ export function wallsStatus(m: MossMap): string {
   if (m.areaSrc === "given") return "Walls: GIVEN to it (dashed) — this MOSS has no depth.";
   if (m.room) return `Walls: still mapping — has looked along ${Math.round(m.room.swept * 100)}% of a turn.`;
   return "Walls: none yet.";
+}
+
+/** The outline of the floor the wrist camera can report, metres: an annular
+ *  sector between the near and far radius the robot publishes, so the map
+ *  never claims the floor beside the tracks (which is below its view). */
+export function wristBand(
+  wcam: NonNullable<MossMap["wcam"]>, steps = 6,
+): [number, number][] {
+  const [x, y, a, near, far] = wcam;
+  const half = (WRIST_HFOV_DEG / 2 * Math.PI) / 180;
+  const at = (r: number, k: number): [number, number] => {
+    const t = a - half + (2 * half * k) / steps;
+    return [x + r * Math.cos(t), y + r * Math.sin(t)];
+  };
+  const out: [number, number][] = [];
+  for (let k = 0; k <= steps; k++) out.push(at(far, k));
+  for (let k = steps; k >= 0; k--) out.push(at(near, k));
+  return out;
 }
 
 /** The panel's extent: the work area once there is one, else what the depth
@@ -278,6 +309,16 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
       }
       ctx.closePath();
       ctx.fill();
+      // the wrist camera, scanning while the arm rests: the BAND of floor it
+      // can actually report, not a wedge from the lens (see `wcam`)
+      if (m.wcam) {
+        ctx.fillStyle = "rgba(88,166,255,0.16)";
+        ctx.beginPath();
+        wristBand(m.wcam).forEach(([x, y], k) =>
+          k ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y)));
+        ctx.closePath();
+        ctx.fill();
+      }
       if (m.goal) {
         ctx.strokeStyle = AMBER;
         ctx.setLineDash([4, 3]);
@@ -367,7 +408,8 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
           </div>
           <div>
             <span style={{ color: WALL }}>■</span> solid to its depth{"  "}
-            <span style={{ color: ORANGE }}>✕</span> bumped into
+            <span style={{ color: ORANGE }}>✕</span> bumped into{"  "}
+            <span style={{ color: "#58a6ff" }}>◢</span> wrist camera scanning
           </div>
           <div ref={walls} style={{ color: "#e6edf3" }} />
           <div style={{ color: GREY }}>

@@ -74,6 +74,10 @@ class Senses:
     #: `publish_proximity` / `publish_size` reads them; zeros there were a
     #: train/deploy mismatch that took the six-shape pick to 4/36 in the yard.
     target_obs: Mapping[str, object] | None = None
+    #: MOSS only: the WRIST camera's own detection frame (`arm_detector`), in
+    #: that camera's frame. A brain that knows where its arm is can place what
+    #: it sees — `brain/tidy_moss` scans with it while the arm rests.
+    arm_det: DetectionFrame | None = None
 
     def fresh_lidar(self, max_age: float) -> LidarFrame | None:
         return self.lidar if (self.lidar is not None and self.lidar_age is not None

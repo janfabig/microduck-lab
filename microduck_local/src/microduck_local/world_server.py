@@ -578,6 +578,7 @@ class WorldState:
         lf = None if lidar is None else lidar.last
         arm_fn = getattr(d, "arm_qpos", None)
         target_obs = self._moss_target_obs(d)
+        arm_det = (getattr(d, "sensors", None) or {}).get("arm_detector")
         return Senses(t=w.t, tof=tof, tof_age=tof_age,
                       det=det, det_age=None if det is None else w.t - det.t,
                       lidar=lf, lidar_age=None if lf is None else w.t - lf.t,
@@ -588,7 +589,8 @@ class WorldState:
                       # the 28.5 mm that costs is on that field.
                       arm=None if arm_fn is None else arm_fn(w.data),
                       holding=d.holding is not None, skill=d.skill, bumped=w.bumped(d),
-                      target_obs=target_obs)
+                      target_obs=target_obs,
+                      arm_det=None if arm_det is None else arm_det.last)
 
     def _moss_target_obs(self, d):
         """MOSS's wrist/front-camera readings of the object nearest its jaws

@@ -48,6 +48,10 @@ def _fly_route(**params):
     from microduck_local.brain.tidy_moss import TidyMoss
     import dataclasses
 
+    # The OLD fold (to the old tuck): `plan_routes` and the rest pose off
+    # unless a test asks — tests/test_moss_motion.py has the planned one.
+    params.setdefault("plan_routes", False)
+    params.setdefault("rest_pose", None)
     b = TidyMoss()
     b.p = dataclasses.replace(b.p, fold_route=True, **params)
     b._to("tuck", 0.0)
