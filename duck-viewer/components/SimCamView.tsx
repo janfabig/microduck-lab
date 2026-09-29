@@ -298,6 +298,8 @@ export function CamOverlay({
           <div><span style={{ color: COLORS.outside }}>●</span> outside the camera's view</div>
           <div style={{ color: "#8b949e", marginTop: 3 }}>
             The simulator's explanation, from where things really are — not MOSS's own belief.
+            The boxes in the camera inset name the object for the same reason; MOSS's own
+            detector only reports a class, and in a tidy room every prop is one class.
             Teal wedge: the camera's view on the floor. Blue cone: the wrist depth camera (0.6 m).
           </div>
           </div>
