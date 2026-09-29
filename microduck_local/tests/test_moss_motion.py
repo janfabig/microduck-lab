@@ -327,3 +327,36 @@ def test_the_jaws_close_ALONG_a_wide_flat_things_long_axis():
     assert b._grip_axis() == b.p.pinch_grip
     b._target_flat, b._fix_sizes = False, [0.115] * 8     # a can
     assert b._grip_axis() == b.p.pinch_grip
+
+
+def test_no_tidy_prop_is_thinner_than_the_jaws_can_close_on():
+    """MOSS's pads stop 8 mm apart fully shut and are 36 mm tall, so they rest
+    ON the floor — a prop much thinner than that cannot be clamped at all, only
+    brushed along the floor.
+
+    `moss-yard`'s `card0` used to be a 60 x 40 x 4 mm rigid plate, and that is
+    why it was left behind in 47 of 48 runs: not a skill the robot lacked, a
+    shape no gripper of this geometry can pick up. MEASURED by remodelling it
+    with the SAME mass and volume as a card that is actually crumpled — folded
+    in quarters, 30 x 20 x 16 mm — over 16 paired seeds: card0 binned 16/16
+    against 10/16, and the whole room got cleaner, +0.50 +- 0.18 objects. The
+    repo's own note already said as much: "most real litter is crumpled rather
+    than flat".
+    """
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    shut_gap = 0.008              # pad inner faces, fully closed
+    for name in ("moss-yard",):
+        raw = json.loads((root / "scenarios" / f"{name}.json").read_text())
+        for prop in raw.get("props", []):
+            if prop.get("cls") != "toy":
+                continue
+            size = prop.get("size")
+            if not isinstance(size, list) or len(size) < 3:
+                continue          # spheres and cylinders carry their own form
+            height = float(size[2])
+            assert height >= shut_gap, (
+                f"{name}: {prop['id']} is {height * 1000:.0f} mm tall — thinner "
+                f"than the {shut_gap * 1000:.0f} mm the jaws shut to, so the pads "
+                "can only brush it along the floor")

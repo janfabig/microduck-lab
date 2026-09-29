@@ -17823,6 +17823,46 @@ residual is 0.00001 straight down and 0.0036 at 5 deg, 0.0063 at 15, 0.0070 at
 30 — over-constrained, not a solver that failed. A pad edge cannot be brought
 under a 4 mm card by tilting; the pads always meet it face-on.
 
+**THE REAL ANSWER: the card was never a card the robot could pick up.**
+Asked why it is not modelled as crumpling like paper — "that was the idea, not
+just a hard stiff card that's very short in height, I imagine that's going to
+be hard for any robot to pick up". Correct, and measured. The pads shut to an
+8 mm gap and are 36 mm tall, so they rest ON the floor: a 4 mm rigid plate
+cannot be clamped by them at all, only brushed along the floor. It was not a
+skill the robot lacked.
+
+Remodelled with the SAME mass and the SAME volume as a card that is actually
+crumpled (the plate is 60 x 40 x 4 = 9600 mm^3), 16 paired seeds of 5 min:
+
+| how `card0` is modelled | card0 binned | total binned |
+|---|---|---|
+| flat plate 60 x 40 x 4 (was shipped) | 10/16 | 166 |
+| **folded in quarters, 30 x 20 x 16** | **16/16** | **174 (+0.50 +- 0.18)** |
+| crumpled to a ball, 21 x 21 x 21 | 16/16 | 171 (+0.31 +- 0.18) |
+
+The folded card SHIPPED. It bins every time and the whole room gets cleaner,
+because the ~4 wasted approaches a run went elsewhere. The repo's own prop note
+already argued for it — "most real litter is crumpled rather than flat — a lump
+is the honest cheap model" — and then the yard used a flattened plate anyway.
+`test_no_tidy_prop_is_thinner_than_the_jaws_can_close_on` holds the line.
+
+**A genuinely deformable card is also possible, and cheap — it just is not
+needed here.** Prototyped: a MuJoCo `flexcomp` grid sheet, 7 x 5 verts,
+inextensible (`<edge equality="true"/>`) and freely bending, attached to the
+MOSS scene. It folds under a press (vertical spread 0 -> 12.3 mm), costs
+**0.05-0.1 ms a step** against the yard's ~0.8 ms tick, and MOSS carries it
+**4/6** with the pads at 0.020 and friction 1.5 — against 2/9 for the rigid
+plate at the height the room can reach. Two caveats: this MuJoCo build ships
+only `mujoco.elasticity.cable`, so there is no stiff shell (the sheet is
+floppy, not papery); and a flex is not a rigid body, so the detector,
+`held_body`, the in-bin test and the viewer's body-pose stream would all need
+a branch. The repo's "a flex sheet costs more than the rest of the env" note
+was about 32 TRAINING envs and does not apply to the one-robot yard.
+
+**Worth a look next, untested:** the pick env's own `card` prop samples 4-12 mm
+thick (`moss_env.sample_prop`), so its thinnest draws are unpickable for the
+same reason — episodes the policy cannot win and cannot learn from.
+
 **What is actually left**, none of it a knob on this pinch: give the card
 something to stop against (a wall, the bin's own lip) so the jaws are not the
 only thing holding it; a thinner pad, or a lip on the pad, in the MJCF — the

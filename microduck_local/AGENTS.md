@@ -283,11 +283,11 @@ of 63, and a base-locked policy measured 23.7 degrees of chassis turn instead
 of 0.3. The second and third of those happened AFTER the guard existed,
 because it covered some of the flags and read as covering all of them.
 
-### Six ways a measurement here has lied, and the check for each
+### Seven ways a measurement here has lied, and the check for each
 
 The first four happened on 2026-09-25, in one session, to numbers that were
 then reported as findings; the fifth on 2026-09-28, and it cost a 48-seed
-battery; the sixth on 2026-09-29, and it survived one. None was a subtle statistical problem; each was an instrument that
+battery; the sixth on 2026-09-29, and it survived one; the seventh was under all of them the whole time. None was a subtle statistical problem; each was an instrument that
 could not answer the question it was pointed at.
 
 **1. Measuring through your own reimplementation instead of the production
@@ -365,6 +365,20 @@ measuring the ANGLE itself.
 to move.* One probe comparing the commanded jaw axis against the object's true
 long axis would have caught it before the battery, and now guards it
 (`test_the_jaws_close_ALONG_a_wide_flat_things_long_axis`).
+
+**7. A TASK THE HARDWARE CANNOT DO, read as a skill the policy lacks.**
+`moss-yard`'s `card0` was left behind in 47 of 48 runs and absorbed days of
+reward, gate and centring work. It is a 60 x 40 x **4 mm** rigid plate, and
+MOSS's pads shut to an 8 mm gap and are 36 mm tall, so they rest on the floor:
+nothing about that grasp was achievable. Remodelled at the same mass and volume
+as a card that is actually crumpled (30 x 20 x 16 mm) it bins **16/16**, and
+the room gets cleaner because the wasted approaches go elsewhere.
+→ *Before tuning a behaviour, check the task is POSSIBLE* — one bench probe
+IK'ing the gripper onto the object at its best pose answers it in minutes, and
+would have come before every battery here.
+→ And when a prop's own docstring says what it is meant to be ("most real
+litter is crumpled rather than flat"), check the asset actually is that. This
+one said it and shipped a flattened plate.
 
 **The habit that catches all of it: plant the regression.** Every test added
 that day was run against a deliberately broken version first — the axis
