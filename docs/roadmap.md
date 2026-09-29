@@ -17889,3 +17889,118 @@ object, including the nine that were binned that run. A per-object counter that
 reads zero for the objects you know succeeded is the instrument failing, not
 the finding. The working version counts the object nearest the jaws on entry to
 a pick state, which has no frame to get wrong.
+
+### Would a real MOSS survive a tidy run? The servos, measured (2026-09-29)
+
+The room clears — 87 of 88 props over eight 300 s `moss-yard` seeds — and
+watched on `/sim` the arm looks calm. That is not the question hardware asks.
+`scripts/probe_moss_safety.py` asks it: what did the ARM have to do, sampled
+every 2 ms PHYSICS step (a three-substep contact is invisible at 50 Hz, the
+lesson `world/arena.py` already learned for bump sensing), against the only
+envelope anyone has declared for these servos — Laurent's own MJCF. Five arm
+joints, position, kp 70, `forcerange` ±2.2 N·m; one finger servo, kp 700, ±8 N.
+A position servo pinned at its `forcerange` is a STALLED servo, so the headline
+numbers are DURATIONS, not peaks.
+
+**What SHIPPED: `TidyMoss.arm_rate_cap = 3.0` rad/s.** `MinJerkRoute` times its
+segments so the busiest joint peaks at `motion_vmax`; the pinch's blends and the
+carry's ramps did not — they ran a FIXED duration whatever distance they had to
+cover, so their peak rate was whatever the pose delta happened to be. Each blend
+is now timed by its own largest delta (duration = peak factor × delta ÷ cap,
+1.5× for a smoothstep and 1.0× for a straight ramp), by TIMING and not by
+clipping: these phases advance on their clock, so a clipped command would hand
+`descend` a roll that never arrived and grasp the card across its short axis
+again. Eight paired seeds, against no cap:
+
+| 180 s (the room still being cleared) | off | cap 3.0 |
+|---|---|---|
+| binned of 88 | 71 | 70 (**−0.12 ± 0.30**) |
+| worst one-tick command step | **2.750 rad** | 0.281 |
+| peak joint speed | 10.02 rad/s | 6.64 |
+| longest unbroken stall at 2.2 N·m | 3.68 s | 1.57 |
+| arm-on-bin contact | 3509 substeps, 211 N | **234**, 127 N |
+| visible arm inside the rover | −19.5 mm | 0.0 |
+| pads on the floor | 1822 substeps | 4603 |
+
+At 300 s the score is 87 → **88 of 88** (+0.12 ± 0.12), the longest stall
+9.21 → 1.57 s, arm-on-bin 8910 → 1766 substeps at 211 → 127 N, and the worst
+visible clip −19.5 → −2.4 mm.
+
+**Both horizons, because a 5-minute score cannot see a slower robot.** The
+obvious cap was 1.5 — `robots/moss_env.ARM_RATED_RAD_S`, twice the policy's own
+0.03 rad at 25 Hz — and at 300 s it looks free (−0.12 ± 0.23). At 180 s it costs
+**−1.50 ± 0.60 binned per seed** (71 → 59): the room finishes either way by five
+minutes, so the horizon that matters is the one where it has not. Swept at 180 s:
+
+    cap     binned (8 paired seeds)   worst step   worst stall   arm-on-bin
+    off              71                 2.750 rad     3.68 s        211 N
+    6.0     -0.25 +- 0.45               1.660         3.00          205
+    3.0     -0.12 +- 0.30               0.281         1.57          127
+    1.5     -1.50 +- 0.60               0.449         0.62          118
+
+3.0 takes almost all of the safety and none of the speed; 6.0 is barely a cap.
+
+**Two step-input sites remain, and the obvious fix for both measured WORSE.**
+A blend can be paced; a STATE ENTRY cannot, because it has no duration.
+(a) `lift`: `ramp_from_achieved` starts each leg where the arm IS, and a servo
+under load lags, so tick one jumps by the lag — 0.11 to 0.43 rad, in most seeds.
+(b) `search` → `approach` with no clear route to rest commands the rest pose
+outright: with the wrist still rolled where a pinch left it, `wrist_roll` goes
++1.904 → −1.179 in one 20 ms tick, **3.083 rad, 154 rad/s**. That single rare
+event is why the 300 s worst-step and peak-speed columns above do not improve.
+
+Both fixes were written, measured and rejected, and they failed the same way:
+
+* a slew limiter on the emitted command (`arm_slew_cap`, kept at 0) took the
+  worst step 0.449 → 0.060 rad and the floor time 6661 → 1979 substeps, but
+  pushed the longest stall 0.99 → **3.88 s** and arm-on-bin to 190 N;
+* ramping into rest in the `approach` branch took the step only 3.08 → 2.50 rad
+  while the longest stall rose 1.57 → **4.18 s** and arm-on-bin 1766 → 5986
+  substeps at 165 N.
+
+**The reason, and it generalises: these are CONTACT stalls, not command stalls.**
+Delaying the arm's arrival lengthens the window it spends pressed against the
+bin. Anything that smooths a transition by making the arm slower to get
+somewhere buys a smaller step and pays for it in seconds at the torque clamp —
+and seconds at the clamp is what kills a servo. The step stays open until
+something gets the arm out of the rolled pose BEFORE the transition.
+
+**The clipping question, answered: essentially clean.** Over four paced seeds,
+17 episodes of the VISIBLE arm inside the rover, worst **−7.3 mm for one 50 ms
+sample** (`visual_upper_arm_link_1` vs `bin_x1`, in `stow`), next −3.0 mm
+(`visual_grip_134` vs `bin_x1`, in `tuck`); every other episode is under a
+millimetre. The `stow` one is the load-bearing jam (`moss_motion`'s docstring):
+the stow reaches the bin by pressing on its front wall. Nothing here would
+break a link.
+
+**Where every peak torque lands: `creep`, the LEARNED pick.** All five joints
+touch the 2.2 N·m clamp, and in 7 of 8 seeds the peak and the stall are both in
+`creep` or the `deploy` before it. The scripted paths are now the gentle ones.
+`moss_env` already holds the four terms that would charge for this —
+`W_TORQUE_SAT`, `W_OVERSPEED`, `W_ARM_FLOOR`, `W_LOW_APPROACH`, each with its
+measurement written above it — and **every one defaults to 0**. Turning them on
+in a retrain of `moss-pick-v1` is the lever for this leg; nothing in this pass
+touched training.
+
+**The finger servo is the hottest actuator and nothing is wrong with it yet.**
+Duty (mean (τ/clamp)², ∝ I²R) 0.19–0.24 against 0.02–0.09 for every arm joint,
+5–8 s of every 300 at the full 8 N, worst stall 1.5 s. The squeeze window is
+`pinch: close` + `rise`, which command the jaw to 0.0 — the hard stop — for
+~1.3 s a pick, after which `hold_jaw` backs the carry off to achieved − 10 mm.
+Backing the pinch off the same way, once `_gripped_raw` is true, is untried.
+
+**The pads are dragged, not rested.** 0.1–0.5% of every run has an arm geom on
+the floor and **73–87% of those substeps are while the base is DRIVING**, up to
+219 N before the cap and 134 N after. `W_ARM_FLOOR` (also 0) is the training-side
+charge; the scripted pinch presses to −14 mm below floor clearance for the card
+deliberately. The cap made this column worse and gentler at once: 3603 → 5308
+substeps at 219 → 134 N. Longer and softer is the right trade for a printed
+finger; it is still a regression on that column and it is not a free win.
+
+**What the probe cannot tell you.** Nothing in this repo has ever driven a
+MOSS. `forcerange ±2.2 N·m` and `±8 N` are Laurent's MJCF, not a datasheet this
+lab has measured against, and `moss_env`'s own note stands: a faithful BAM for
+these servos needs the STS3215's stall torque and no-load speed measured, which
+is his to give. Every number above is "how hard the sim's arm pushed on the
+sim's clamp" — the right question before a first real run, and no substitute
+for it.

@@ -600,6 +600,77 @@ class TidyMossParams:
     route_margin_m: float = 0.010
     motion_vmax: float = 1.2
     motion_leash_rad: float = 0.10
+    #: NO SCRIPTED BLEND MAY DEMAND MORE THAN THE JOINT'S RATED SPEED, rad/s.
+    #:
+    #: `MinJerkRoute` times its segments so the busiest joint peaks at
+    #: `motion_vmax`; the pinch's blends and the carry's ramps did not — they
+    #: ran a FIXED duration whatever distance the arm had to cover, so their
+    #: peak rate was whatever the pose delta happened to be. MEASURED over
+    #: four 300 s moss-yard seeds (`scripts/probe_moss_safety.py`), sampling
+    #: every 2 ms physics step: `wrist_roll` reaches **8.4-10.0 rad/s**
+    #: (480-574 deg/s) in `pinch/align`, from one-tick command steps of
+    #: 0.166-0.200 rad, and the lift/stow ramps step 0.047-0.049 rad a tick.
+    #: `align` is where the roll turns the jaws onto a card's long axis, which
+    #: can be a quarter turn delivered in 0.42 s.
+    #:
+    #: Applied by TIMING the blend (duration = peak factor x delta / cap), not
+    #: by clipping the command: these phases advance on their clock, so a
+    #: clipped command would hand `descend` a roll that never arrived and
+    #: grasp the card across its short axis again. 0 = off, for the A/B.
+    #:
+    #: **3.0, and the number was MEASURED, not reasoned.** The obvious choice
+    #: was 1.5 — `robots/moss_env.ARM_RATED_RAD_S`, twice the policy's own
+    #: 0.03 rad at 25 Hz — and at the 300 s horizon it looks free (binned
+    #: -0.12 +- 0.23 per seed). It is not: at 180 s, where the room is still
+    #: being cleared rather than already clear, 1.5 costs **-1.50 +- 0.60
+    #: binned per seed** (71 -> 59 over eight paired seeds). A 5-minute score
+    #: cannot see a slower robot, because it finishes either way. Swept at
+    #: 180 s against no cap at all:
+    #:
+    #:     cap     binned (8 seeds)   worst step   worst stall   arm-on-bin
+    #:     off             71            2.750 rad     3.68 s       211 N
+    #:     6.0    -0.25 +- 0.45          1.660         3.00         205
+    #:     3.0    -0.12 +- 0.30          0.281         1.57         127
+    #:     1.5    -1.50 +- 0.60          0.449         0.62         118
+    #:
+    #: 3.0 takes almost all of the safety and none of the speed; 6.0 is barely
+    #: a cap (1.66 rad in one tick is still a step input). 3.0 rad/s is 172
+    #: deg/s, inside what an STS3215-class servo can turn unloaded, so it is
+    #: not a rate the hardware would simply fail to follow — but nothing here
+    #: has measured that servo, and that is the whole reason this is a knob.
+    arm_rate_cap: float = 3.0
+    #: ...AND A SLEW LIMITER ON THE EMITTED COMMAND, rad/s. 0 = off.
+    #:
+    #: Pacing the blends fixes the blends. It cannot fix a STATE TRANSITION,
+    #: which is a step input by construction: `ramp_from_achieved` starts each
+    #: leg at where the arm IS, and a servo under load lags its command, so
+    #: the first tick of `lift` jumps by exactly that lag. MEASURED over eight
+    #: 300 s moss-yard seeds with the blends already paced: the worst one-tick
+    #: command step is still 0.122-0.449 rad, and every one of the eight is in
+    #: `lift`. 0.449 rad in 20 ms is a 22 rad/s demand.
+    #:
+    #: This clips the command to the LAST COMMAND +- cap*dt, which is what a
+    #: real servo bus would do anyway. It cannot silently stall a plan: every
+    #: blend is paced under the same cap, so the limiter only ever has a
+    #: transition's lag to pay off, and it pays it off in ceil(lag/cap*dt)
+    #: ticks. The GRIPPER is deliberately outside it — its travel is 41 mm of
+    #: slide on its own servo, and nothing here has measured that servo's
+    #: rate, so capping it would be a number I made up.
+    #:
+    #: **OFF, and it is a measured NO — it trades one hazard for another.**
+    #: Eight paired 300 s seeds against the paced arm (2026-09-29), mission
+    #: score null (+0.12 +- 0.23 binned per seed). It does what it was written
+    #: to do: the worst one-tick step falls 0.449 -> 0.060 rad, the arm's time
+    #: on the floor 6661 -> 1979 substeps and the hardest floor contact
+    #: 151 -> 118 N. But delaying the command leaves the arm arriving late,
+    #: and the numbers that decide whether a servo survives got WORSE: the
+    #: longest unbroken stall at the 2.2 N m clamp 0.99 -> 3.88 s, arm-on-bin
+    #: contact 3310 -> 6243 substeps at 118 -> 190 N, and peak joint speed
+    #: 6.9 -> 10.4 rad/s (gravity, not a command — the limiter does not hold
+    #: the arm up). A 3.9 s stall is the exact failure this pass exists to
+    #: remove, so this stays off and the transition step stays open: the fix
+    #: belongs in where the lift's ramp STARTS, not in a clamp after it.
+    arm_slew_cap: float = 0.0
     #: Drive up to a can with the arm HELD at rest (the scripted approach)
     #: instead of the learned approach, which drives AND moves the arm — it
     #: was adopted because the arm could not reach the old tuck, and in the
@@ -996,6 +1067,8 @@ class TidyMoss:
         #: (`_wrist_floor_band`) — the map must not draw reach the sensor
         #: hasn't got.
         self._wcam: tuple[float, float, float, float, float] | None = None
+        #: (last emitted arm command, when) — `_slew`.
+        self._slew_from: tuple[dict | None, float] = (None, -1.0)
         self._pinch: dict | None = None
         self._release_from: float | None = None
         self._pinch_twist = (0.0, 0.0, 0.0)
@@ -1520,7 +1593,7 @@ class TidyMoss:
                       hover=hover, hover_pose=pose, fixes=[], yaws=[])
             return {**pc["from"], moss.GRIPPER_JOINT: 0.041}, "pinch: hovering"
         if ph == "hover":
-            a = dt / p.pinch_move_s
+            a = dt / self._paced(p.pinch_move_s, pc["from"], pc["hover_pose"])
             arm = blend(pc["from"], pc["hover_pose"], a)
             if a >= 1.0:
                 pc.update(phase="settle", since=since, fixes=[], yaws=[])
@@ -1560,13 +1633,14 @@ class TidyMoss:
             pc.update(phase="align", since=since, over_pose=over_pose, grasp_pose=pose)
             return {**pc["hover_pose"], moss.GRIPPER_JOINT: 0.041}, "pinch: lining up"
         if ph == "align":
-            a = dt / (0.6 * p.pinch_move_s)
+            a = dt / self._paced(0.6 * p.pinch_move_s,
+                                 pc["hover_pose"], pc["over_pose"])
             arm = blend(pc["hover_pose"], pc["over_pose"], a)
             if a >= 1.0:
                 pc.update(phase="descend", since=since, hover_pose=pc["over_pose"])
             return {**arm, moss.GRIPPER_JOINT: 0.041}, "pinch: lining up"
         if ph == "descend":
-            a = dt / p.pinch_move_s
+            a = dt / self._paced(p.pinch_move_s, pc["hover_pose"], pc["grasp_pose"])
             arm = blend(pc["hover_pose"], pc["grasp_pose"], a)
             if a >= 1.0:
                 pc.update(phase="close", since=since)
@@ -1591,7 +1665,7 @@ class TidyMoss:
             self._dropped = self.p.missed_pick_straight
             return None, "pinch: missed"
         if ph == "rise":
-            a = dt / p.pinch_move_s
+            a = dt / self._paced(p.pinch_move_s, pc["grasp_pose"], pc["rise_pose"])
             arm = blend(pc["grasp_pose"], pc["rise_pose"], a)
             if a < 1.0:
                 return {**arm, moss.GRIPPER_JOINT: 0.0}, "pinch: rising"
@@ -1904,6 +1978,38 @@ class TidyMoss:
         """`carry_ease`: smoothstep — zero speed at both ends of a leg."""
         return k * k * (3.0 - 2.0 * k) if self.p.carry_ease else k
 
+    def _slew(self, arm, t: float):
+        """`arm_slew_cap`: the arm command no further from the LAST command
+        than the cap allows in the time since it. The gripper passes through
+        (see the param)."""
+        cap = float(self.p.arm_slew_cap)
+        if cap <= 0.0 or not isinstance(arm, dict):
+            return arm
+        last, t0 = self._slew_from
+        if last is not None and t > t0:
+            room = cap * (t - t0)
+            arm = {**arm, **{j: float(np.clip(arm[j], last[j] - room, last[j] + room))
+                             for j in moss.ARM_JOINTS if j in arm and j in last}}
+        self._slew_from = ({j: float(arm[j]) for j in moss.ARM_JOINTS if j in arm}, t)
+        return arm
+
+    def _paced(self, seconds: float, a, b, eased: bool = True) -> float:
+        """`seconds`, stretched until no joint exceeds `arm_rate_cap`.
+
+        `a` and `b` are the two ends of a blend, either as dicts keyed by
+        `moss.ARM_JOINTS` or as sequences in that order. A smoothstep's peak
+        rate is 1.5x its mean and a straight ramp's is 1.0x, so `eased` picks
+        the factor — getting that wrong would cap the wrong number.
+        """
+        cap = float(self.p.arm_rate_cap)
+        if cap <= 0.0:
+            return seconds
+        def val(pose, j, i):
+            return float(pose[j] if isinstance(pose, dict) else pose[i])
+        span = max(abs(val(b, j, i) - val(a, j, i))
+                   for i, j in enumerate(moss.ARM_JOINTS))
+        return max(float(seconds), (1.5 if eased else 1.0) * span / cap)
+
     def _grip_is_a_grasp(self, senses: Senses) -> bool:
         """Are the jaws AROUND the can, or shut past it? See `min_grasp_m`."""
         arm = senses.arm or {}
@@ -2008,6 +2114,7 @@ class TidyMoss:
                 return _pose(target)
             self._ramp_from = {j: float(senses.arm.get(j, v))
                                for j, v in zip(moss.ARM_JOINTS, target)}
+        seconds = self._paced(seconds, self._ramp_from, target, eased=False)
         k = min(1.0, max(0.0, since / max(seconds, 1e-3)))
         return {j: (1.0 - k) * self._ramp_from[j] + k * v
                 for j, v in zip(moss.ARM_JOINTS, target)}
@@ -2028,6 +2135,8 @@ class TidyMoss:
         if self._carry_from is None:
             self._carry_from = {j: float((self._policy_cmd or {}).get(j, v))
                                 for j, v in zip(moss.ARM_JOINTS, moss.GRASP_POSE)}
+        eased = self.state in ("lift", "stow") and self.p.carry_ease
+        seconds = self._paced(seconds, self._carry_from, target, eased=eased)
         k = min(1.0, max(0.0, since / max(seconds, 1e-3)))
         if self.state in ("lift", "stow"):
             k = self._ease(k)
@@ -2189,6 +2298,24 @@ class TidyMoss:
                              p.approach_kp * math.atan2(y, x))
                     mv = (self._move_to(self._rest(), senses, since, self._fold_hubs())
                           if p.plan_routes else None)
+                    # NO CLEAR ROUTE: the rest pose is commanded OUTRIGHT,
+                    # and that is a step input — MEASURED the largest single
+                    # thing the whole mission does. Entering `approach` with
+                    # the wrist still rolled where a pinch left it,
+                    # `wrist_roll` goes +1.904 -> -1.179 in one 20 ms tick:
+                    # **3.083 rad, 154 rad/s**. No blend-pacing can help a
+                    # command that is not a blend.
+                    #
+                    # Ramping it here (as the `tuck` branch above does) was
+                    # tried and MEASURED WORSE, twice over: eight paired 300 s
+                    # seeds, the step only fell 3.08 -> 2.50 rad while the
+                    # longest stall at the torque clamp rose 1.57 -> 4.18 s
+                    # and arm-on-bin contact 1766 -> 5986 substeps at
+                    # 127 -> 165 N. Same result as `arm_slew_cap`: the stalls
+                    # here are CONTACT stalls, so delaying the arm's arrival
+                    # lengthens the window it spends pressed on the bin. The
+                    # step stays until something gets the arm out of the
+                    # rolled pose BEFORE this state, which is where it belongs.
                     arm = mv[0] if mv is not None else _pose(self._rest())
                     note = f"approach: can {x:.2f} m ahead, arm at rest"
                 elif "approach" in self._sessions:
@@ -2683,7 +2810,7 @@ class TidyMoss:
                 if self._carry_jaw is not None:
                     jaw = self._carry_jaw
             arm = {**arm, moss.GRIPPER_JOINT: jaw}
-        return Intent(twist=twist, arm=arm, note=note)
+        return Intent(twist=twist, arm=self._slew(arm, t), note=note)
 
     def inputs(self) -> dict:
         """What the inspector shows: the fix this brain is acting on."""

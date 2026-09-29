@@ -283,12 +283,14 @@ of 63, and a base-locked policy measured 23.7 degrees of chassis turn instead
 of 0.3. The second and third of those happened AFTER the guard existed,
 because it covered some of the flags and read as covering all of them.
 
-### Seven ways a measurement here has lied, and the check for each
+### Eight ways a measurement here has lied, and the check for each
 
 The first four happened on 2026-09-25, in one session, to numbers that were
 then reported as findings; the fifth on 2026-09-28, and it cost a 48-seed
-battery; the sixth on 2026-09-29, and it survived one; the seventh was under all of them the whole time. None was a subtle statistical problem; each was an instrument that
-could not answer the question it was pointed at.
+battery; the sixth on 2026-09-29, and it survived one; the seventh was under
+all of them the whole time; the eighth was every number in this file agreeing
+while the robot was being damaged. None was a subtle statistical problem; each
+was an instrument that could not answer the question it was pointed at.
 
 **1. Measuring through your own reimplementation instead of the production
 path.** A probe built `MossPickEnv(...)` directly, so `MICRODUCK_MOSS_PICK_RUNG`
@@ -380,12 +382,54 @@ would have come before every battery here.
 litter is crumpled rather than flat"), check the asset actually is that. This
 one said it and shipped a flattened plate.
 
+**8. A task score that is fine while the ACTUATORS are not.** `moss-yard`
+binned 87 of 88 props over eight 300 s seeds, and watched on `/sim` the arm
+looked calm — no flailing, no visible clipping. Sampled every 2 ms physics step
+instead (`scripts/probe_moss_safety.py`), the same runs commanded
+`shoulder_pan` **2.750 rad in one 20 ms tick**, drove joints to 13.6 rad/s
+against a 0.75 rad/s deploy envelope, and held `shoulder_pan` at its full
+2.2 N·m clamp for an unbroken **9.2 s** — a cooked servo on the hardware this
+is a rehearsal for. Every mission metric this repo has ever tracked was blind
+to all three, because they are properties of the CONTROL SIGNAL and the
+actuator, not of the outcome.
+→ *Before a behaviour is allowed near hardware, measure the joints, not the
+score:* longest unbroken stall at the torque clamp, peak per-tick command step,
+peak joint speed, torque duty cycle, and contact force between the arm and the
+robot's own body. Durations, not peaks — a servo dies of holding, not of
+hitting. And sample at the PHYSICS step: a three-substep contact is invisible
+at the 50 Hz control tick, which `world/arena.py` already learned for bump
+sensing.
+→ The corollary that made this cheap: the sim's own `forcerange` and joint
+ranges ARE an envelope, even when no datasheet has been measured against them.
+"How long did a position servo sit pinned at the clamp its model declares" is
+answerable today and needs no hardware.
+→ *And measure the score at a horizon where the task is not yet finished.* The
+rate cap that fixed all of the above looked FREE at the benchmark's 300 s
+(-0.12 +- 0.23 binned per seed) and cost **-1.50 +- 0.60** at 180 s, because by
+five minutes the room is clear either way. A score that saturates cannot see a
+slower robot; a safety change is exactly the kind that makes one.
+→ *And the smooth-it-out fix is not free either.* Two interventions that
+softened a step input — a slew limiter on the command, and ramping into the
+rest pose — each cut the step and each made the STALLS three to four times
+worse, because the stalls are CONTACT stalls: delaying the arm's arrival
+lengthens the window it spends pressed on the bin. Seconds at the clamp is what
+kills a servo, so both were rejected on their own measurement.
+
 **The habit that catches all of it: plant the regression.** Every test added
 that day was run against a deliberately broken version first — the axis
 coverage test against a front camera reporting nothing (0% at rung 2), the
 geometry test against a jaw sliding vertically (yaw span 164.7 -> 0.0 deg). Two
 earlier tests in this repo passed against their own planted breakage and were
 rewritten. A test not yet seen to fail is a comment.
+
+**...and run the UNPLANTED copy as a control.** Planting into a `PYTHONPATH`
+package copy (the discipline for A/Bing a shared checkout) moves
+`__file__`, and `robots/moss.CACHE_DIR` is derived from it — so on 2026-09-29
+one test failed in all four planted copies and was nearly credited with
+catching all four plants, when it was failing on a missing asset cache in any
+copy at all. The control ran green only with `MICRODUCK_MOSS_DIR` pointed back
+at the real checkout. *A plant proves a test bites only if the same copy,
+unplanted, is green.*
 
 ### The stage must show the physics the TRAINER is running
 
