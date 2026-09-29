@@ -186,3 +186,34 @@ it. Now it maps them.
 * Open: built on odometry, ideal in the yard; with drift the walls would smear — that is SLAM.
   The area is a rectangle; a non-rectangular room needs the patrol to follow free space.
 
+## The pop when it places, and the butt that fell through the floor (2026-09-28)
+
+Asked on /sim: "a jerky motion when it's trying to place the object into the bin ... that
+little pop is what's dislodging objects". Measured per tick over deliveries, it was two
+separate things, and neither needed a retrain (the stow is scripted).
+
+* **The pop is the stow, not the release.** `STOW_HIGH`/`STOW_TURNED` hold `shoulder_lift` at
+  -1.35, behind the bin's front wall: 0.8 s into the "up" leg the upper arm lands on `bin_x1`
+  (17 N) and stalls 0.22 rad short while the command keeps climbing, scrapes the wall at
+  18-26 N through the first half of the turn (pan stick-slips), then slides off the edge and
+  the shoulder snaps through the 0.22 rad at 2.3-2.8 rad/s — every delivery. A kinematic sweep
+  finds -1.10 contact-free end to end with the tool 7 cm over the rim through the turn.
+  `stow_clear_lift = -1.10` (brain param; `moss_env`'s poses untouched): 48 seeds x 15 min,
+  stow peak acceleration **63.3 -> 2.8 rad/s^2** (median), arm on the bin **53.6 -> 0 N**,
+  objects truly in the bin 484 v 483 (+0.02 +- 0.06), 449 v 447 at 5 min, stow time unchanged.
+* **Opening the jaws slowly does not help**: the step open flicks the object sideways at
+  0.3-0.5 m/s, and a 0.4 s ramp left that at 0.34 v 0.36 while knocking 14 objects out of the
+  bin against 6. `release_open_s` stays 0.
+* **The butt fell THROUGH the bin floor.** Released ~25 cm up it meets the 4 mm floor at
+  ~2 m/s under the room props' soft contact (priority 1, solref 0.02), sinks past the floor's
+  middle and is pushed out of the bottom into an 8 mm gap over the hull — where it rode ~5 min
+  counted as "in the bin" (the old count only asked z > 0.03) and then slid out the back while
+  MOSS drove: the one object lost from the bin in 12/12 runs. `moss.bin_floor_governs` gives
+  the floor priority 2 so its own contact (0.008) catches the landing; his geometry unchanged.
+  After it: 0 objects under the floor in 144 runs and no butt lost. **Earlier yard numbers
+  counted that butt as delivered** (both arms of every A/B alike, so the comparisons stand);
+  the scorer now counts only objects above `BIN_FLOOR_Z`.
+* What still knocks things out, ~1 delivery in 100: the fold home after release catching a
+  tall can on the way out (all 6 ejections in the clear arm are during `tuck`). And the arm
+  jerks (130 rad/s^2) where the learned approach takes over after a fold — away from the bin.
+

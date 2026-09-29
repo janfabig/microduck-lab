@@ -498,6 +498,26 @@ class TidyMossParams:
     #: caused this are 0.6 m and more away.
     retarget_gate_m: float = 0.30
     release_s: float = 1.8
+    #: THE POP (asked on /sim 2026-09-28: "a jerky motion when it places the
+    #: object ... that little pop"). The stow's first two waypoints hold
+    #: `shoulder_lift` at -1.35, which is BEHIND the bin: 0.8 s into the
+    #: "up" leg the upper arm lands on `bin_x1` at 17 N and stalls 0.22 rad
+    #: short while its command keeps climbing, scrapes the wall at 18-26 N
+    #: through the first half of the turn, then slides off the edge and
+    #: snaps through the 0.22 rad at 2.3-2.8 rad/s (70 rad/s^2) — in every
+    #: stow. A kinematic sweep of the path finds -1.10 contact-free end to
+    #: end, the tool still 7 cm over the rim through the turn (0.335 m;
+    #: 0.362 at -1.35). None keeps the old waypoints.
+    #: MEASURED, moss-yard, 48 seeds x 15 min (bin floor fixed in both):
+    #: stow peak joint acceleration 63.3 -> 2.8 rad/s^2 (median; p90 71.6 ->
+    #: 2.8), arm on the bin 53.6 -> 0 N; objects truly in the bin 484 v 483
+    #: (+0.02 +- 0.06), 449 v 447 at 5 min; stow time unchanged (5.40 s).
+    stow_clear_lift: float | None = -1.10
+    #: Open the jaws over this long at release instead of in one step (the
+    #: step flicks the object sideways at 0.3-0.5 m/s as it goes). 0 = step.
+    #: MEASURED OFF: 0.4 s left the flick where it was (0.34 v 0.36 m/s) and
+    #: knocked 14 objects out of the bin against 6 over the same 48 seeds.
+    release_open_s: float = 0.0
     tuck_s: float = 2.4
     #: THE LEARNED FOLD's budget. It takes ~190 control ticks (7.6 s) in its
     #: env; past this it hands on to search wherever the arm is.
@@ -803,6 +823,7 @@ class TidyMoss:
         self._fix_size: float | None = None
         self._kin = None
         self._pinch: dict | None = None
+        self._release_from: float | None = None
         self._pinch_twist = (0.0, 0.0, 0.0)
         self._pinched = False
         self._lift_z0: float | None = None
@@ -1781,6 +1802,7 @@ class TidyMoss:
         if state == "lift":
             self._lift_z0 = None
         self._low_since = None
+        self._release_from = None
         self.state, self._t0 = state, t
         self._fold_seeded = False
         self._route, self._route_tried = None, False
@@ -2074,8 +2096,12 @@ class TidyMoss:
             drop_pose = ME.STOW_RELEASE_HIGH if p.release_high else ME.STOW_INSIDE
             turn_s = (p.pinch_turn_s if (self._pinched and p.pinch_turn_s)
                       else p.stow_turn_s)
-            legs = ((ME.STOW_HIGH, p.stow_high_s),
-                    (ME.STOW_TURNED, turn_s),
+            high, turned = ME.STOW_HIGH, ME.STOW_TURNED
+            if p.stow_clear_lift is not None:
+                high = (high[0], p.stow_clear_lift) + tuple(high[2:])
+                turned = (turned[0], p.stow_clear_lift) + tuple(turned[2:])
+            legs = ((high, p.stow_high_s),
+                    (turned, turn_s),
                     (drop_pose, p.stow_down_s))
             t_end = 0.0
             arm = None
@@ -2144,6 +2170,13 @@ class TidyMoss:
 
         elif self.state == "release":
             arm = {moss.GRIPPER_JOINT: 0.041}
+            if p.release_open_s > 0.0:
+                if self._release_from is None:
+                    self._release_from = float((senses.arm or {}).get(
+                        moss.GRIPPER_JOINT, moss.GRASP_JAW_CTRL_M))
+                k = min(1.0, since / p.release_open_s)
+                arm = {moss.GRIPPER_JOINT: self._release_from
+                       + k * (0.041 - self._release_from)}
             note = "release: into the bin"
             if since >= p.release_s:
                 self._carry_from = None

@@ -1613,6 +1613,34 @@ def raise_bin_walls(spec: mujoco.MjSpec) -> None:
     """
 
 
+#: Above a room prop's 1, as `FINGER_PADS` are: the bin floor's contact
+#: model governs a landing (`bin_floor_governs`).
+BIN_FLOOR_PRIORITY = 2
+
+
+def bin_floor_governs(spec: mujoco.MjSpec) -> None:
+    """Let the BIN FLOOR's contact model govern what lands on it, as the jaw
+    pads' governs what they grip (`tune_contacts`).
+
+    A room gives its props priority 1 and a soft solref (0.02 s), and MuJoCo
+    resolves a pair with the higher-priority geom's parameters, so a landing
+    in the bin was the PROP's soft contact against a 4 mm floor. MEASURED
+    2026-09-28: the cigarette butt (0.6 g, 8 mm) released at the stow's
+    height meets the floor at ~2 m/s, sinks past its middle before the soft
+    contact catches it, and is pushed out of the BOTTOM — into the 8 mm gap
+    over the hull, where it rode ~5 min counted as "in the bin" and then slid
+    out of the back while the robot drove: the one object lost from the bin
+    in every moss-yard run (12/12). Under the floor's own (0.008 s) it lands
+    on top. His geometry is unchanged.
+    """
+    try:
+        floor = spec.geom("bin_floor")
+    except Exception:
+        return
+    if floor is not None:
+        floor.priority = BIN_FLOOR_PRIORITY
+
+
 def tune_contacts(spec: mujoco.MjSpec) -> None:
     """Let the JAW's contact model govern whatever it grips.
 
@@ -1797,12 +1825,14 @@ def robot_spec(xml: Path | None = None) -> mujoco.MjSpec:
             # rather than the drive's gain.
             tracks_as_support(cspec)
             add_arm_camera(cspec)
+            bin_floor_governs(cspec)
             return cspec
     spec = load_robot_spec(xml)
     add_planar_base(spec)
     add_camera(spec)
     couple_fingers(spec)
     tune_contacts(spec)
+    bin_floor_governs(spec)
     drop_base_servo(spec)
     set_base_inertial(spec)
     rewrite_home_key(spec)

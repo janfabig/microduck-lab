@@ -2293,3 +2293,92 @@ def test_the_litter_set_is_opt_in_and_draws_real_litter():
     assert paper.condim == 6 and paper.friction[2] >= 0.01
     env = MossPickEnv(seed=1, prop_variety=True, litter=True)
     assert env.litter
+
+
+def test_a_light_object_dropped_into_the_empty_bin_stays_on_its_floor():
+    """The cigarette butt (0.6 g, 8 mm) released at the stow's height lands
+    on the 4 mm bin floor at ~2 m/s. MEASURED 2026-09-28: it went THROUGH
+    the floor in one physics step, into the 8 mm pocket between the floor
+    and the hull, rode there ~5 min counted as "in the bin", and slid out of
+    the back while the robot drove — the one object lost from the bin in
+    every moss-yard run. `bin_floor_governs` lets the floor's own (stiffer)
+    contact catch it; his geometry is unchanged."""
+    import json as _json
+    from microduck_local.viz_server import load_policy_infer
+    from microduck_local.world import scenario as S
+    from microduck_local.world_server import WorldState
+    raw = _json.loads(Path(__file__).resolve().parents[1].joinpath(
+        "scenarios/moss-yard.json").read_text())
+    w = WorldState(load_infer=load_policy_infer).build(S.Scenario.from_dict(raw), seed=0)
+    r = w.ducks["m0"]
+    m, d = w.model, w.data
+    rover = m.body(r.prefix + moss.BASE_BODY).id
+    butt = m.body("butt0")
+    qa = int(m.jnt_qposadr[butt.jntadr[0]])
+    va = int(m.jnt_dofadr[butt.jntadr[0]])
+    for _ in range(5):
+        w.step()
+    R = d.xmat[rover].reshape(3, 3)
+    drop = d.xpos[rover] + R @ np.array([-0.11, 0.0, 0.36])   # where a release lets go
+    d.qpos[qa:qa + 3] = drop
+    d.qpos[qa + 3:qa + 7] = [1.0, 0.0, 0.0, 0.0]
+    d.qvel[va:va + 6] = 0.0
+    mujoco.mj_forward(m, d)
+    for _ in range(75):                                        # 1.5 s
+        w.step()
+    q = R.T @ (d.xpos[butt.id] - d.xpos[rover])
+    assert q[2] > moss.BIN_FLOOR_Z, f"under the bin floor: z {q[2]:.4f}"
+    assert moss.BIN_INTERIOR_X[0] < q[0] < moss.BIN_INTERIOR_X[1]
+
+
+def _stow_path_bin_contact(lift: float) -> float:
+    """Deepest arm-into-bin penetration (m) along the scripted stow's three
+    legs from the lift pose, with `shoulder_lift` held at `lift` over the
+    turn — kinematically, the rover parked in moss-yard."""
+    import json as _json
+    from microduck_local.robots import moss_env as ME
+    from microduck_local.viz_server import load_policy_infer
+    from microduck_local.world import scenario as S
+    from microduck_local.world_server import WorldState
+    raw = _json.loads(Path(__file__).resolve().parents[1].joinpath(
+        "scenarios/moss-yard.json").read_text())
+    w = WorldState(load_infer=load_policy_infer).build(S.Scenario.from_dict(raw), seed=0)
+    r = w.ducks["m0"]
+    m, d = w.model, w.data
+    for _ in range(5):
+        w.step()
+    qa = [m.joint(r.prefix + j).qposadr[0] for j in moss.ARM_JOINTS]
+    bins = {m.geom(r.prefix + n).id for n in moss.HULL_GEOMS if n.startswith("bin_")}
+    arm_bodies = {i for i in range(m.nbody) if any(
+        k in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, i) or "")
+        for k in ("upper_arm", "lower_arm", "wrist", "gripper", "jaw"))}
+    high = (ME.STOW_HIGH[0], lift) + tuple(ME.STOW_HIGH[2:])
+    turned = (ME.STOW_TURNED[0], lift) + tuple(ME.STOW_TURNED[2:])
+    q0, deepest = d.qpos.copy(), 0.0
+    for a, b in ((moss.LIFT_POSE, high), (high, turned), (turned, ME.STOW_RELEASE_HIGH)):
+        for s in np.linspace(0.0, 1.0, 41):
+            d.qpos[:] = q0
+            for adr, x, y in zip(qa, a, b):
+                d.qpos[adr] = (1 - s) * x + s * y
+            mujoco.mj_forward(m, d)
+            for i in range(d.ncon):
+                c = d.contact[i]
+                pair = {(c.geom1 in bins), (c.geom2 in bins)}
+                arm = {int(m.geom_bodyid[c.geom1]) in arm_bodies,
+                       int(m.geom_bodyid[c.geom2]) in arm_bodies}
+                if pair == {True, False} and True in arm and c.dist < 0:
+                    deepest = max(deepest, -float(c.dist))
+    return deepest
+
+
+def test_the_stow_swings_round_clear_of_the_bin():
+    """THE POP: the stow's waypoints held `shoulder_lift` at -1.35, behind the
+    bin's front wall — the upper arm stalled on `bin_x1` at 17 N 0.22 rad
+    short, scraped it through the turn and snapped free at ~2.8 rad/s
+    (70 rad/s^2) on every delivery. The brain's default holds it where the
+    whole path is clear; the old value is the control."""
+    from microduck_local.brain.tidy_moss import TidyMossParams
+    lift = TidyMossParams().stow_clear_lift
+    assert lift is not None
+    assert _stow_path_bin_contact(lift) == 0.0
+    assert _stow_path_bin_contact(-1.35) > 0.004
