@@ -1131,6 +1131,31 @@ answerable by drawing placements and calling the planner directly, with no
 outcome in the loop and so no way for selection to bite. Two routes that cannot
 share a bias are worth more than two runs of the route that can.
 
+### A test gated on optional assets SKIPS exactly where it would fail
+
+`test_the_lab_slot_for_an_imitation_run_turns_the_clips_clock` was red on
+`development` and nobody saw it, because it is `@needs_g1`: on a machine that
+never ran `uv run fetch-g1` it skips, and on one that has the assets it fails.
+It was therefore green in CI and in every fresh checkout, and red only for the
+person actually working on the G1 — the one audience it was written for.
+
+**The rule.** When a test is gated on an optional download, ask what it does on
+BOTH sides of the gate, and add a sibling that runs everywhere. The one written
+here fakes the body through the registry, so the seam is covered on any machine;
+the `@needs_g1` test keeps proving the real clock turns. A skip and a pass read
+identically in a summary line, so `-q` output of "15 skipped" is not information
+until you know which 15.
+
+**And check EVERY caller of a hook once you have fixed one.** The bug was
+`except Exception` around `Body.train_env_kwargs`, which refuses with
+`raise SystemExit` — this repo's CLI idiom, and a `BaseException`, so the guard
+did not catch it. Fixing `lab/robots.slot_env` and then grepping the hook's
+other callers found the identical hole in `viz_server._body_env_kwargs`, the
+trainee preview's translation of a stage's knobs. That second one is reachable
+only when a stage carries a `MICRODUCK_` knob — the function returns early when
+none do — so a first probe with an empty stage said it was fine. *A probe that
+takes the early return has not tested the code past it.*
+
 ### A characterisation that silently inherits a default stops characterising anything the day the default moves
 
 The most expensive error of 2026-09-09, and it hid for months behind tests that

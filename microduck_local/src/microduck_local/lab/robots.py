@@ -724,12 +724,25 @@ def slot_env(robot: str, seed: int, kwargs: dict | None = None):
     # A caller that names the kwarg itself WINS: the trainee preview resolves
     # its stage's rung and passes it explicitly, and that must beat whatever
     # the lab process happens to have exported.
+    #
+    # `SystemExit`, not just `Exception`: `train_env_kwargs` is the TRAINER's
+    # hook and a missing CLI flag is fatal THERE, which this repo spells as
+    # `raise SystemExit` — the G1's does it for `--task imitate` with no
+    # `--clip`. `SystemExit` is a `BaseException`, so an `except Exception`
+    # here does not catch it and the refusal escaped into the lab, where it is
+    # not a refusal at all: the caller already knows the clip (it came out of
+    # the run's own `run.json` via `viz_server.env_kwargs_for_task_run`) and
+    # the merge below is exactly what lets it win. `viz_server` line ~2893
+    # already catches the same idiom from `env_class`; this did not, and every
+    # G1 imitation slot in the lab raised instead of previewing. A body that
+    # refuses simply contributes no derived knobs, which is what the caller's
+    # own kwargs are for. `KeyboardInterrupt` is deliberately NOT caught.
     fn = getattr(body, "train_env_kwargs", None)
     if fn is not None:
         import types
         try:
             derived = dict(fn(types.SimpleNamespace(task=task)))
-        except Exception:
+        except (SystemExit, Exception):  # noqa: BLE001  (see above)
             derived = {}
         kw = {**derived, **kw}
     return body.env_class(task)(**kw)

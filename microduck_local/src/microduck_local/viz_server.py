@@ -2612,7 +2612,15 @@ def _body_env_kwargs(b, stage_env: dict[str, str] | None) -> dict:
     try:
         os.environ.update(knobs)
         return dict(fn(types.SimpleNamespace(task=getattr(b, "task", None))))
-    except Exception:
+    except (SystemExit, Exception):  # noqa: BLE001
+        # `SystemExit`, not just `Exception`: `train_env_kwargs` is the
+        # TRAINER's hook and a missing CLI flag is fatal THERE, spelled
+        # `raise SystemExit` (the G1's does it for `--task imitate` with no
+        # `--clip`). It is a `BaseException`, so `except Exception` let it out
+        # of a PREVIEW builder — reachable on any stage that carries a
+        # MICRODUCK_ knob, since the early return above skips this call when
+        # none do. Same fix and same reason as `lab/robots.slot_env`; found by
+        # checking every caller of the hook after fixing that one.
         return {}
     finally:
         for k, old_v in prev.items():
