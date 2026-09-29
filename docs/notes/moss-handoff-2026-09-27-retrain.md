@@ -144,11 +144,45 @@ need SLAM?" Three findings, three changes.
   48/48 runs (39/48 before; the cap was left 11 times); phantom approaches 188 -> 0; search
   464 -> 258 s/run. At 5 min 444 v 439 (+0.10 +- 0.17) — the benchmark rarely reaches the
   end game, so it neither gains nor loses. The card is the only thing left (42/48).
-* The work AREA is declared (the scenario's wall rectangle via `runtime.attach_world`), not
-  sensed: MOSS has no range sensor here. Modelling the RealSense depth would let it map the
-  walls itself — the depth/SLAM session's thread.
+* The work AREA was declared (the scenario's wall rectangle via `runtime.attach_world`) —
+  superseded the same day, next section.
 * /sim: "MOSS's map · what it believes" (map toggle) draws the memory, the floor it has
   looked at, the rim route and its current leg, beside the camera overlay's explanation of
   what it can really see.
 * Counting note: the brain's own `picked` and the objects truly in the bin differ (a
   "dropped" pinch that lands in the bin anyway) — new yard numbers here count the bin.
+
+## The walls from its own depth, and touch (2026-09-28)
+
+Asked on /sim: "is it drawing those walls from the actual environment?" It was — handed to
+it. Now it maps them.
+
+* **The RealSense depth, as a scan** (`robots/moss.DEPTH_SCAN_RAYS`): the D455f depth row
+  through the level lens, 88 rays over 87 deg, 0.52-6 m, 10 Hz — `depthimage_to_laserscan`'s
+  reading of a depth image. A `LidarSensor(centred=True)` on `moss_camera`, so it rides the
+  lab's existing scan plumbing (`senses.lidar`, the frame's `sensors.lidar` with a new `body`
+  key, the /sim overlay). Mounted when the scenario's `tof` field names a preset;
+  `moss-yard` now says `"tof": "ideal"`. Drawn from the world RNG AFTER both detectors, so
+  every detector seed is what it was. From the spawn the middle ray reads 2.234 m, the
+  predicted distance to the far wall's inner face; 80 of 88 rays hit walls, the rest upright
+  toys, none MOSS itself. It passes over lying toys and the cap (a 75 mm slice).
+* **`RoomMap`** (`brain/moss_search.py`): log-odds occupancy, 5 cm cells, odometry frame;
+  free along each ray, a hit at its end, so a picked upright can is cleared by the rays that
+  pass where it stood. The work area is the rectangle round the solid cells once 90% of a
+  turn has been scanned. `sense_walls` ON; with no depth (`tof: null`) the scenario's walls
+  are used and the map says "given". Rim waypoints inside anything solid or felt are skipped.
+* **Touch**: a patrol leg commanded forward that makes no progress for 1 s marks the spot in
+  front of the base as FELT and ends the leg. [sim] it reads the body's true speed; on the
+  rover the encoders keep counting on slipping tracks, so it needs motor current or the IMU.
+* 48 seeds x 15 min, sensed v given walls: sensed rectangle = the real walls in every run
+  (worst 0.000 m), ready at 128 s median (159 max); objects truly in the bin **482 v 486
+  (-0.08 +- 0.05)**, 443 v 444 at 5 min. The gap is the card (lucky deliveries 3 v 6) and one
+  butt left by a corner jam (seed 4, creeping at a corner — target-driven, not the patrol);
+  wall contact +261 +- 195 ticks a run (noise). Touch fired once, at a corner inside the
+  depth's 0.52 m floor.
+* /sim: the map panel draws the depth's solid cells, felt marks (orange), the sensed area,
+  and a "Walls: found by its depth camera / GIVEN / still mapping N%" line; the camera
+  legend and the map minimize like the inspector.
+* Open: built on odometry, ideal in the yard; with drift the walls would smear — that is SLAM.
+  The area is a rectangle; a non-rectangular room needs the patrol to follow free space.
+

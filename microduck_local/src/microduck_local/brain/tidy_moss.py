@@ -543,8 +543,8 @@ class TidyMossParams:
     #: the same place) — a phantom detection never recurs where it was.
     #: `patrol`: when a full turn shows nothing, drive to the nearest
     #: remembered object and look from close up, else drive the rim of the
-    #: work area (`patrol_inset_m` in from the scenario's walls) turning to
-    #: face the middle at each waypoint.
+    #: work area (`patrol_inset_m` in from its walls — sensed, below) turning
+    #: to face the middle at each waypoint.
     #: MEASURED, moss-yard, 48 seeds x 15 min, objects truly in the bin:
     #: 486 v 469 (+0.35 +- 0.10, halves +0.46/+0.25); every seed cleared all
     #: ten grippable objects (39/48 before — the cap was left 11 times); 188
@@ -566,6 +566,34 @@ class TidyMossParams:
     see_range_per_size: float = 20.0
     #: How far out a look counts as having covered the floor, m.
     cover_m: float = 1.0
+    #: THE WALLS FROM ITS OWN DEPTH (`moss_search.RoomMap`): the work area is
+    #: the rectangle round what the RealSense's depth scan has found solid,
+    #: once it has swept most of a turn. Off — or on a MOSS with no depth
+    #: (`tof: null`) — the scenario's walls are handed to it instead, and
+    #: the /sim map says "given".
+    #: MEASURED, moss-yard, 48 seeds x 15 min against the given walls: the
+    #: sensed rectangle matched the real walls in every run (worst error
+    #: 0.000 m), ready at 128 s median (159 max) — before any rim leg is
+    #: wanted; objects truly in the bin 482 v 486 (-0.08 +- 0.05, halves
+    #: -0.08/-0.08), every grippable object binned in 47/48 v 48/48 and the
+    #: difference is the card (delivered by luck 3 v 6 times) and one butt
+    #: left by a corner jam; at 5 min 443 v 444. So: no measurable cost, and
+    #: the walls are its own. Touch fired once (a corner inside the depth's
+    #: 0.52 m floor).
+    sense_walls: bool = True
+    #: TOUCH, for what the depth cannot see (under its 75 mm slice, inside
+    #: its 0.52 m floor): a patrol leg commanded forward at `stall_cmd_mps`
+    #: or more that moves slower than `stall_mps` for `stall_s` has hit
+    #: something. It is marked on the map `felt_ahead_m` in front of the
+    #: base and the leg ends. [sim] `speed` is the body's true speed here;
+    #: on the rover the tracks' encoders keep counting when they slip, so
+    #: the stall has to come from motor current or the IMU.
+    stall_s: float = 1.0
+    stall_mps: float = 0.03
+    stall_cmd_mps: float = 0.10
+    felt_ahead_m: float = 0.22
+    #: A rim waypoint within this of anything solid or felt is skipped.
+    waypoint_clear_m: float = 0.25
     #: A detection older than this is not a fix any more.
     stale_s: float = 1.0
     #: Only cans IN FRONT are targets: a bearing past this is something the
@@ -760,6 +788,10 @@ class TidyMoss:
         self._mem = None
         self._cov = None
         self._patrol = None
+        self._room = None
+        self._lidar_t: float | None = None
+        #: "sensed" (the depth's walls), "given" (the scenario's), or None.
+        self._area_src: str | None = None
         self._srch: dict | None = None
         self._det_t: float | None = None
         self._mem_target: tuple[float, float] | None = None
@@ -860,13 +892,12 @@ class TidyMoss:
 
     def _remember(self, senses: Senses, t: float) -> None:
         """Fold this camera frame into the memory and the coverage map."""
-        from .moss_search import Coverage, ObjectMemory, Patrol, area_from_world
+        from .moss_search import ObjectMemory, Patrol
         p = self.p
         if self._mem is None:
             self._mem = ObjectMemory()
-            area = area_from_world(self.world)
-            self._patrol = Patrol(area, p.patrol_inset_m)
-            self._cov = Coverage(area) if area is not None else None
+            self._patrol = Patrol(None, p.patrol_inset_m)
+        self._map_room(senses)
         # A delivered object leaves the memory with the delivery.
         if self._target_world is not None:
             self._mem_target = self._target_world
@@ -907,6 +938,36 @@ class TidyMoss:
             if cam is not None:
                 self._cov.mark(cam, od[2], half, 0.15, p.cover_m, t)
 
+    def _map_room(self, senses: Senses) -> None:
+        """The depth into the room map, and the work area it gives: the
+        sensed one when this MOSS has depth, the scenario's when it has not."""
+        from .moss_search import Coverage, Patrol, RoomMap, area_from_world
+        p = self.p
+        lf = senses.lidar
+        if p.sense_walls and lf is not None and self._odom is not None:
+            if self._room is None:
+                self._room = RoomMap(self._odom[:2])
+            if lf.t != self._lidar_t:
+                self._lidar_t = lf.t
+                self._room.update(lf, self._odom, moss.DEPTH_MAX_RANGE_M)
+        if self._room is not None:
+            area = self._room.area()
+            src = "sensed" if area is not None else None
+        elif self._area_src == "given" or senses.t < 1.0:
+            # A MOSS whose depth has said nothing in its first second has
+            # none; before that, the first scan may simply not be in yet.
+            return
+        else:
+            area = area_from_world(self.world)
+            src = "given" if area is not None else None
+        old = self._patrol.area
+        if area is None or (src == self._area_src and old is not None and max(
+                abs(a - b) for a, b in zip(area, old)) < 0.1):
+            return
+        self._patrol = Patrol(area, p.patrol_inset_m)
+        self._cov = Coverage(area)
+        self._area_src = src
+
     def _patrol_step(self, senses: Senses, t: float):
         """The search when `patrol` is on -> (twist, note)."""
         p = self.p
@@ -943,7 +1004,10 @@ class TidyMoss:
                           goal=(x + (e.x - x) * k, y + (e.y - y) * k),
                           look=(e.x, e.y))
             else:
-                wp = self._patrol.next_waypoint(x, y) if self._patrol else None
+                room = self._room
+                clear = (None if room is None else
+                         (lambda wx, wy: room.blocked(wx, wy, p.waypoint_clear_m)))
+                wp = self._patrol.next_waypoint(x, y, clear) if self._patrol else None
                 if wp is None:
                     st.update(phase="spin", turned=0.0, yaw=yaw)
                     return spin
@@ -963,6 +1027,22 @@ class TidyMoss:
                 err = wrap(math.atan2(gy - y, gx - x) - yaw)
                 wz = max(-p.search_wz, min(p.search_wz, 2.0 * err))
                 vx = p.patrol_mps * max(0.0, math.cos(err)) ** 3 if abs(err) < 1.0 else 0.0
+                # Touch: driving and not moving is something in the way.
+                if vx >= p.stall_cmd_mps and abs(senses.speed or 0.0) < p.stall_mps:
+                    st.setdefault("stall", t)
+                    if t - st["stall"] >= p.stall_s:
+                        if self._room is not None:
+                            self._room.feel(x + p.felt_ahead_m * math.cos(yaw),
+                                            y + p.felt_ahead_m * math.sin(yaw))
+                        if st["kind"] == "memory":
+                            e = next((e for e in self._mem.items if e.id == st["id"]), None)
+                            if e is not None:
+                                self._mem.items.remove(e)
+                        st.pop("stall", None)
+                        st["phase"] = "choose"
+                        return (0.0, 0.0, 0.0), "search: bumped into something, marked it"
+                else:
+                    st.pop("stall", None)
                 what = ("a remembered object" if st["kind"] == "memory"
                         else "the next spot on the rim")
                 return (vx, 0.0, wz), f"search: driving to {what}"
@@ -998,6 +1078,8 @@ class TidyMoss:
         st = self._srch if self.state == "search" else None
         return {
             "area": list(self._patrol.area) if self._patrol and self._patrol.area else None,
+            "areaSrc": self._area_src,
+            "room": None if self._room is None else self._room.payload(),
             "rim": [list(w) for w in (self._patrol.waypoints if self._patrol else [])],
             "mem": [[round(e.x, 3), round(e.y, 3), round(e.size, 3), e.hits,
                      int(self._mem.confirmed(e)), round(t - e.last, 1),

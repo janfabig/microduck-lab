@@ -7,10 +7,14 @@
 // see; this is the robot's side, from `brain.inputs.map`
 // (brain/tidy_moss.TidyMoss.map_payload), all in its odometry frame:
 //
-//   * a mini-map panel: the work area, where it has looked (brighter = more
-//     recently), every object it remembers (solid = confirmed by a second
-//     sighting, hollow = seen once, red x = given up on), where it thinks it
-//     is and what its camera covers, the rim route, and the leg it is on
+//   * a mini-map panel: the walls and anything else its DEPTH has found
+//     solid (light cells), what it has bumped into (orange), the work area
+//     it worked out from them — or, on a MOSS with no depth, the scenario's
+//     walls it was handed, drawn dashed and labelled "given" — where it has
+//     looked (brighter = more recently), every object it remembers (solid =
+//     confirmed by a second sighting, hollow = seen once, red x = given up
+//     on), where it thinks it is and what its camera covers, the rim route,
+//     and the leg it is on
 //   * the same memory in the room: a square on the floor at each remembered
 //     spot, and a line to where it is driving — so belief can be compared
 //     with where things really are
@@ -19,18 +23,36 @@
 // follows the page's rule: no React state per frame (canvas + one
 // LineSegments, both written from useFrame).
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
 
+import { loadJSON, saveJSON } from "@/lib/persist";
 import { getSelectedDuck } from "@/lib/select";
+import { PanelToggle } from "./Panel";
 import { OVERLAY_LAYER, type SimClient } from "@/lib/sim";
 
 /** [x, y, size, hits, confirmed, age_s, writtenOff] */
 type MemRow = [number, number, number, number, number, number, number];
+/** `moss_search.RoomMap.payload`: the depth's occupancy grid. */
+export interface RoomGrid {
+  x0: number;
+  y0: number;
+  cell: number;
+  n: number;
+  /** Flat indices (iy * n + ix) of the cells the depth found solid. */
+  solid: number[];
+  /** Where a patrol leg stalled against something the depth did not see. */
+  felt: [number, number][];
+  /** Share of a full turn the scans have looked along, 0..1. */
+  swept: number;
+}
 export interface MossMap {
   area: [number, number, number, number] | null;
+  /** Where the work area came from: its own depth, or the scenario. */
+  areaSrc?: "sensed" | "given" | null;
+  room?: RoomGrid | null;
   rim: [number, number][];
   mem: MemRow[];
   target: [number, number] | null;
@@ -45,7 +67,9 @@ const TEAL = "#43c2b8";
 const AMBER = "#f2b632";
 const RED = "#e5534b";
 const GREY = "#8b949e";
-const MAX_SEG = 600;
+const ORANGE = "#f0883e";
+const WALL = "#c9d1d9";
+const MAX_SEG = 2000;
 const FLOOR_Z = 0.006;
 
 const LEG_TEXT: Record<string, string> = {
@@ -63,10 +87,42 @@ export function mapStatus(m: MossMap): string {
   return `${conf} remembered${once ? ` · ${once} seen once` : ""} · ${leg}`;
 }
 
+/** Where the walls on the map come from, in words. */
+export function wallsStatus(m: MossMap): string {
+  if (m.areaSrc === "sensed") return "Walls: found by its depth camera.";
+  if (m.areaSrc === "given") return "Walls: GIVEN to it (dashed) — this MOSS has no depth.";
+  if (m.room) return `Walls: still mapping — has looked along ${Math.round(m.room.swept * 100)}% of a turn.`;
+  return "Walls: none yet.";
+}
+
+/** The panel's extent: the work area once there is one, else what the depth
+ *  has found so far (and the robot), else a room-sized box round the robot. */
+export function mapView(m: MossMap, pose?: number[] | null): [number, number, number, number] | null {
+  if (m.area) return m.area;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const add = (x: number, y: number) => {
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  };
+  const g = m.room;
+  if (g) for (const k of g.solid) add(g.x0 + ((k % g.n) + 0.5) * g.cell, g.y0 + (Math.floor(k / g.n) + 0.5) * g.cell);
+  if (pose) {
+    add(pose[0] - 0.5, pose[1] - 0.5);
+    add(pose[0] + 0.5, pose[1] + 0.5);
+  }
+  if (!Number.isFinite(x0)) return null;
+  return [x0, x1, y0, y1];
+}
+
 export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled: boolean }) {
   const panel = useRef<HTMLDivElement | null>(null);
   const cv = useRef<HTMLCanvasElement | null>(null);
   const status = useRef<HTMLDivElement | null>(null);
+  const walls = useRef<HTMLDivElement | null>(null);
+  // Minimizes to its title bar, like every other /sim panel (remembered).
+  const [open, setOpen] = useState(() => loadJSON("simMossMapOpen", true));
+  useEffect(() => saveJSON("simMossMapOpen", open), [open]);
+  const openRef = useRef(open);
+  openRef.current = open;
   const lines = useRef<THREE.LineSegments>(null);
   useEffect(() => {
     lines.current?.layers.set(OVERLAY_LAYER);
@@ -85,7 +141,8 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
     const m = d ? (d.brain.inputs as { map?: MossMap }).map : undefined;
     const pose = d?.odomEst;
     const pn = panel.current;
-    const show = m && m.area ? "block" : "none";
+    const view = m ? mapView(m, pose) : null;
+    const show = view ? "block" : "none";
     if (pn && pn.style.display !== show) pn.style.display = show;
 
     // --- in the room: memory squares, rim route, the leg being driven
@@ -101,6 +158,18 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
       n++;
     };
     if (m) {
+      // what the depth found solid, and what it bumped into
+      const g = m.room;
+      if (g) {
+        const h = g.cell / 2 - 0.004;
+        for (const k of g.solid) {
+          const x = g.x0 + ((k % g.n) + 0.5) * g.cell, y = g.y0 + (Math.floor(k / g.n) + 0.5) * g.cell;
+          seg([x - h, y - h], [x + h, y + h], "#6e7681"); seg([x - h, y + h], [x + h, y - h], "#6e7681");
+        }
+        for (const [x, y] of g.felt) {
+          seg([x - 0.06, y - 0.06], [x + 0.06, y + 0.06], ORANGE); seg([x - 0.06, y + 0.06], [x + 0.06, y - 0.06], ORANGE);
+        }
+      }
       for (const [x, y, size, , conf, , off] of m.mem) {
         const h = Math.max(size * 0.8, 0.03);
         const c = off ? RED : conf ? TEAL : GREY;
@@ -118,13 +187,15 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
     }
 
     // --- the panel (every 3rd frame is plenty)
-    if (!m || !m.area || (tick.current++ % 3) !== 0) return;
+    if (!m || !view || !openRef.current || (tick.current++ % 3) !== 0) return;
     const c = cv.current;
     const ctx = c?.getContext("2d");
     if (!c || !ctx) return;
-    const [x0, x1, y0, y1] = m.area;
+    const [x0, x1, y0, y1] = view;
     const pad = 0.1;
-    const sx = W / (x1 - x0 + 2 * pad);
+    // Fit the width, but never taller than 220 px: a half-mapped room can be
+    // a long thin strip before the far walls are in.
+    const sx = Math.min(W / (x1 - x0 + 2 * pad), 220 / (y1 - y0 + 2 * pad));
     const H = Math.round((y1 - y0 + 2 * pad) * sx);
     if (c.height !== H) c.height = H;
     const px = (x: number) => (x - x0 + pad) * sx;
@@ -133,7 +204,7 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
     ctx.fillStyle = "#0d1117";
     ctx.fillRect(0, 0, W, H);
     // where it has looked
-    if (m.cov) {
+    if (m.cov && m.area) {
       const [nx, ny] = m.cov.n;
       const cw = (x1 - x0) / nx, ch = (y1 - y0) / ny;
       for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
@@ -143,10 +214,40 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
         ctx.fillRect(px(x0 + i * cw), py(y0 + (j + 1) * ch), cw * sx + 0.5, ch * sx + 0.5);
       }
     }
-    // the walls it was given
-    ctx.strokeStyle = "#c9d1d9";
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(px(x0), py(y1), (x1 - x0) * sx, (y1 - y0) * sx);
+    // the work area: sensed (thin, from the cells below), or GIVEN (dashed)
+    if (m.area) {
+      const [ax0, ax1, ay0, ay1] = m.area;
+      const given = m.areaSrc === "given";
+      ctx.strokeStyle = given ? GREY : "#3d444d";
+      ctx.lineWidth = given ? 1.5 : 1;
+      if (given) ctx.setLineDash([6, 4]);
+      ctx.strokeRect(px(ax0), py(ay1), (ax1 - ax0) * sx, (ay1 - ay0) * sx);
+      ctx.setLineDash([]);
+      if (given) {
+        ctx.fillStyle = GREY;
+        ctx.font = "9px ui-monospace, Menlo, monospace";
+        ctx.fillText("given, not sensed", px(ax0) + 4, py(ay1) + 11);
+      }
+    }
+    // what its depth found solid, and what it bumped into
+    const g = m.room;
+    if (g) {
+      ctx.fillStyle = WALL;
+      const w = Math.max(g.cell * sx, 1.5);
+      for (const k of g.solid) {
+        const x = g.x0 + (k % g.n) * g.cell, y = g.y0 + (Math.floor(k / g.n) + 1) * g.cell;
+        ctx.fillRect(px(x), py(y), w, w);
+      }
+      ctx.strokeStyle = ORANGE;
+      ctx.lineWidth = 2;
+      for (const [x, y] of g.felt) {
+        const X = px(x), Y = py(y);
+        ctx.beginPath();
+        ctx.moveTo(X - 4, Y - 4); ctx.lineTo(X + 4, Y + 4);
+        ctx.moveTo(X + 4, Y - 4); ctx.lineTo(X - 4, Y + 4);
+        ctx.stroke();
+      }
+    }
     // the rim route
     if (m.rim.length > 1) {
       ctx.setLineDash([3, 3]);
@@ -217,6 +318,9 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
     const txt = mapStatus(m);
     const s = status.current;
     if (s && s.textContent !== txt) s.textContent = txt;
+    const wt = wallsStatus(m);
+    const ws = walls.current;
+    if (ws && ws.textContent !== wt) ws.textContent = wt;
   });
 
   return (
@@ -229,10 +333,14 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
         <lineBasicMaterial vertexColors transparent opacity={0.9} />
       </lineSegments>
       <Html fullscreen style={{ pointerEvents: "none" }}>
-        <div ref={panel} style={{ display: "none", position: "absolute", zIndex: 50, right: 12, bottom: 96, width: W + 16,
+        <div ref={panel} style={{ display: "none", position: "absolute", zIndex: 50, right: 12, bottom: 96, width: W + 16, pointerEvents: "auto",
           font: "10px/1.45 ui-monospace, Menlo, monospace", color: "#c9d1d9", padding: 8,
           background: "rgba(16,18,22,0.88)", border: "1px solid #2d333b", borderRadius: 4 }}>
-          <div style={{ color: "#e6edf3" }}>MOSS&apos;S MAP · what it believes</div>
+          <div style={{ display: "flex", alignItems: "flex-start", color: "#e6edf3" }}>
+            <span style={{ flex: 1 }}>MOSS&apos;S MAP · what it believes</span>
+            <PanelToggle open={open} onToggle={() => setOpen((v) => !v)} what="MOSS's map" />
+          </div>
+          <div style={{ display: open ? "block" : "none" }}>
           <div ref={status} style={{ color: GREY, marginBottom: 4 }} />
           <canvas ref={cv} width={W} height={180} style={{ display: "block", width: W }} />
           <div style={{ marginTop: 4 }}>
@@ -241,9 +349,14 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
             <span style={{ color: RED }}>✕</span> gave up{"  "}
             <span style={{ color: AMBER }}>◯</span> going for
           </div>
+          <div>
+            <span style={{ color: WALL }}>■</span> solid to its depth{"  "}
+            <span style={{ color: ORANGE }}>✕</span> bumped into
+          </div>
+          <div ref={walls} style={{ color: "#e6edf3" }} />
           <div style={{ color: GREY }}>
-            Shaded: floor it has looked at (brighter = more recent). Dashed: its rim patrol.
-            The walls are given to it, not sensed.
+            Shaded: floor it has looked at (brighter = more recent). Dashed teal: its rim patrol.
+          </div>
           </div>
         </div>
       </Html>

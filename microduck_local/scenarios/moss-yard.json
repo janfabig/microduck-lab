@@ -68,7 +68,7 @@
         0.0
       ],
       "policy": null,
-      "tof": null,
+      "tof": "ideal",
       "detector": "datasheet",
       "brain": "tidy_moss",
       "odom": "ideal",

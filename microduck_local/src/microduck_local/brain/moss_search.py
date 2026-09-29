@@ -25,15 +25,30 @@ robot has (its detections and its own pose):
   remembered, drive the rim of the work area, `inset_m` in from its walls,
   turning to face the middle at every waypoint.
 
-The WORK AREA is declared, not sensed: MOSS has no range sensor in this sim
-(its RealSense's depth is not modelled), so it cannot find the walls itself.
-It is the yard's wall rectangle from the scenario — what a person marks in an
-app — and the place a mapped wall line would plug in.
+The WORK AREA was declared at first — the scenario's wall rectangle handed to
+the brain, because the RealSense's depth was not modelled. Asked on /sim the
+same day ("is it drawing those walls from the actual environment?"), it now
+comes from MOSS's own sensing:
+
+* `RoomMap` — an occupancy grid built from the depth scan
+  (`robots/moss.DEPTH_SCAN_RAYS`: the D455f's depth row at the lens's 75 mm),
+  in the odometry frame: every return marks its cell occupied and the cells
+  the ray passed through free. The work area is the rectangle round what is
+  solid, once the scans have swept most of a turn. And what the depth cannot
+  see — anything under its 75 mm slice or inside its 0.52 m near limit — is
+  FELT: a patrol leg that stalls against something marks it.
+
+The declared area survives only as the fallback for a MOSS with no depth
+(`tof: null`), and the /sim map says which one it is drawing. The map is
+built on odometry, which is ideal in `moss-yard`; with drift the walls would
+smear, which is what SLAM would correct and this does not.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+
+import numpy as np
 
 
 @dataclass
@@ -211,18 +226,23 @@ class Patrol:
             return None
         return ((self.area[0] + self.area[1]) / 2, (self.area[2] + self.area[3]) / 2)
 
-    def next_waypoint(self, x: float, y: float) -> tuple[float, float] | None:
+    def next_waypoint(self, x: float, y: float,
+                      blocked=None) -> tuple[float, float] | None:
         """The next rim waypoint: the nearest one the first time, then on
-        round the loop."""
+        round the loop, skipping any `blocked(x, y)` says is in something."""
         if not self.waypoints:
             return None
+        n = len(self.waypoints)
         if self.i is None:
-            self.i = min(range(len(self.waypoints)),
-                         key=lambda k: math.hypot(self.waypoints[k][0] - x,
-                                                  self.waypoints[k][1] - y))
+            order = sorted(range(n), key=lambda k: math.hypot(
+                self.waypoints[k][0] - x, self.waypoints[k][1] - y))
         else:
-            self.i = (self.i + 1) % len(self.waypoints)
-        return self.waypoints[self.i]
+            order = [(self.i + k) % n for k in range(1, n + 1)]
+        for k in order:
+            if blocked is None or not blocked(*self.waypoints[k]):
+                self.i = k
+                return self.waypoints[k]
+        return None
 
 
 def area_from_world(world) -> tuple[float, float, float, float] | None:
@@ -242,3 +262,134 @@ def area_from_world(world) -> tuple[float, float, float, float] | None:
     if len(xs) < 4:
         return None
     return (min(xs), max(xs), min(ys), max(ys))
+
+
+class RoomMap:
+    """What the depth has shown of the room: a log-odds occupancy grid in the
+    odometry frame, `half_m` either side of where the robot started.
+
+    A return adds `hit` to its cell, the cells the ray crossed lose `miss`,
+    both clamped, so a thing that moves (an upright can, picked) is cleared by
+    the rays that later pass where it stood. A cell is SOLID above `occ`: two
+    returns, or one wall seen from two places. Returns the device marks
+    invalid (inside 0.52 m, or dropped) are skipped whole — a ray with no
+    range says nothing about the free space along it either.
+    """
+
+    def __init__(self, centre: tuple[float, float], cell_m: float = 0.05,
+                 half_m: float = 4.0, hit: float = 0.85, miss: float = 0.4,
+                 lo_min: float = -2.0, lo_max: float = 3.5, occ: float = 1.2,
+                 sweep_bins: int = 36, sweep_need: float = 0.9):
+        self.cell = cell_m
+        self.n = int(round(2 * half_m / cell_m))
+        self.x0 = centre[0] - half_m
+        self.y0 = centre[1] - half_m
+        self.lo = np.zeros((self.n, self.n), np.float32)      # [iy, ix]
+        self.hit, self.miss = hit, miss
+        self.lo_min, self.lo_max, self.occ = lo_min, lo_max, occ
+        #: World bearings the scan has looked along, in `sweep_bins` bins:
+        #: the area is not trusted until `sweep_need` of them are seen — a
+        #: rectangle round three walls is the wrong room.
+        self.swept = np.zeros(sweep_bins, bool)
+        self.sweep_need = sweep_need
+        #: Things FELT, not seen: (x, y) where a leg stalled. The depth does
+        #: not clear these — what it could not see it cannot see past.
+        self.felt: list[tuple[float, float]] = []
+        self.scans = 0
+        self._area: tuple[float, float, float, float] | None = None
+
+    def _ij(self, x, y):
+        return (np.floor((np.asarray(x) - self.x0) / self.cell).astype(int),
+                np.floor((np.asarray(y) - self.y0) / self.cell).astype(int))
+
+    def update(self, frame, odom: tuple[float, float, float],
+               max_range: float | None = None) -> None:
+        """Fold one scan (`sensors.lidar.LidarFrame`) in, taken at `odom`. A
+        reading at `max_range` is "nothing there": free space, no wall."""
+        ok = np.asarray(frame.valid, bool)
+        if not ok.any():
+            return
+        x, y, yaw = odom
+        c, s = math.cos(yaw), math.sin(yaw)
+        mx, my = (0.0, 0.0) if frame.mount_pos is None else (
+            float(frame.mount_pos[0]), float(frame.mount_pos[1]))
+        ox, oy = x + c * mx - s * my, y + s * mx + c * my
+        a = yaw + np.asarray(frame.angles, np.float64)[ok]
+        r = np.asarray(frame.ranges, np.float64)[ok]
+        ca, sa = np.cos(a), np.sin(a)
+        b = np.floor(((a % (2 * math.pi)) / (2 * math.pi)) * len(self.swept)).astype(int)
+        self.swept[np.clip(b, 0, len(self.swept) - 1)] = True
+        step = self.cell * 0.5
+        k = np.arange(0.0, float(r.max()), step)
+        tt = k[None, :]
+        free = tt < (r[:, None] - self.cell)
+        fx = ox + ca[:, None] * tt
+        fy = oy + sa[:, None] * tt
+        fi, fj = self._ij(fx[free], fy[free])
+        far = r < (1e9 if max_range is None else max_range - 1e-6)
+        hi, hj = self._ij(ox + ca * r, oy + sa * r)
+        inside = lambda i, j: (i >= 0) & (i < self.n) & (j >= 0) & (j < self.n)
+        m = inside(fi, fj)
+        fflat = np.unique(fj[m] * self.n + fi[m])
+        m = inside(hi, hj) & far
+        hflat = np.unique(hj[m] * self.n + hi[m])
+        fflat = np.setdiff1d(fflat, hflat, assume_unique=True)
+        flat = self.lo.reshape(-1)
+        flat[fflat] -= self.miss
+        flat[hflat] += self.hit
+        np.clip(self.lo, self.lo_min, self.lo_max, out=self.lo)
+        self.scans += 1
+        self._area = None
+
+    def solid(self) -> np.ndarray:
+        """Flat indices (iy * n + ix) of the solid cells."""
+        return np.flatnonzero(self.lo.reshape(-1) > self.occ)
+
+    def centre_of(self, flat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return (self.x0 + (flat % self.n + 0.5) * self.cell,
+                self.y0 + (flat // self.n + 0.5) * self.cell)
+
+    @property
+    def swept_frac(self) -> float:
+        return float(self.swept.mean())
+
+    def area(self) -> tuple[float, float, float, float] | None:
+        """The work area MOSS has sensed: the rectangle round everything
+        solid, once most of a turn has been scanned; None before."""
+        if self._area is None and self.swept_frac >= self.sweep_need:
+            xs, ys = self.centre_of(self.solid())
+            if xs.size >= 8:
+                h = self.cell / 2
+                self._area = (float(xs.min()) - h, float(xs.max()) + h,
+                              float(ys.min()) - h, float(ys.max()) + h)
+        return self._area
+
+    def feel(self, x: float, y: float) -> None:
+        self.felt.append((x, y))
+
+    def blocked(self, x: float, y: float, r: float) -> bool:
+        """Is anything solid or felt within `r` of (x, y)?"""
+        if any(math.hypot(fx - x, fy - y) < r for fx, fy in self.felt):
+            return True
+        n = int(math.ceil(r / self.cell))
+        i, j = self._ij(x, y)
+        i0, i1 = max(int(i) - n, 0), min(int(i) + n + 1, self.n)
+        j0, j1 = max(int(j) - n, 0), min(int(j) + n + 1, self.n)
+        if i0 >= i1 or j0 >= j1:
+            return False
+        win = self.lo[j0:j1, i0:i1] > self.occ
+        if not win.any():
+            return False
+        jj, ii = np.nonzero(win)
+        cx = self.x0 + (ii + i0 + 0.5) * self.cell
+        cy = self.y0 + (jj + j0 + 0.5) * self.cell
+        return bool((np.hypot(cx - x, cy - y) < r).any())
+
+    def payload(self) -> dict:
+        """For the /sim map: the grid's frame and its solid cells."""
+        return {"x0": round(self.x0, 3), "y0": round(self.y0, 3),
+                "cell": self.cell, "n": self.n,
+                "solid": self.solid().tolist(),
+                "felt": [[round(x, 3), round(y, 3)] for x, y in self.felt],
+                "swept": round(self.swept_frac, 2)}
+

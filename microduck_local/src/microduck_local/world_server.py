@@ -1076,7 +1076,11 @@ def tof_payload(w: World, d) -> dict | None:
                         # the viewer can draw the scan from the aperture and
                         # not from the chassis origin — 76 mm apart on MARS.
                         "mount": (None if f.mount_pos is None
-                                  else [round(float(v), 4) for v in f.mount_pos])}
+                                  else [round(float(v), 4) for v in f.mount_pos]),
+                        # The body the rays leave from, unprefixed, so the
+                        # overlay draws from the right aperture: MARS's
+                        # `base_laser`, MOSS's RealSense (`moss_camera`).
+                        "body": lidar.mount.split("/")[-1]}
     gripper = gripper_payload(w, d)
     if gripper is not None:
         out["gripper"] = gripper

@@ -24,13 +24,15 @@
 // Per-frame painting follows the page's rule — no React state per frame: one
 // LineSegments rewritten in place, and a fixed pool of labels moved by ref.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
 
 import type { Scene } from "@/lib/lab";
+import { loadJSON, saveJSON } from "@/lib/persist";
 import { getSelectedDuck } from "@/lib/select";
+import { PanelToggle } from "./Panel";
 import { OVERLAY_LAYER, quatRotate, type DetPayload, type SimClient } from "@/lib/sim";
 
 /** `[name, why, p, x, y, z, radius, nearSome, nearAll, blockedBy]`
@@ -116,6 +118,9 @@ export function CamOverlay({
   const groups = useRef<(THREE.Group | null)[]>([]);
   const tags = useRef<(HTMLDivElement | null)[]>([]);
   const legend = useRef<HTMLDivElement | null>(null);
+  // Minimizes to its title bar, like every other /sim panel (remembered).
+  const [legendOpen, setLegendOpen] = useState(() => loadJSON("simCamLegendOpen", true));
+  useEffect(() => saveJSON("simCamLegendOpen", legendOpen), [legendOpen]);
 
   useFrame(() => {
     const ls = lines.current;
@@ -264,10 +269,14 @@ export function CamOverlay({
         <meshBasicMaterial color={WEDGE} transparent opacity={0.1} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       <Html fullscreen zIndexRange={[15, 0]} style={{ pointerEvents: "none" }}>
-        <div ref={legend} style={{ display: "none", position: "absolute", zIndex: 50, left: 56, bottom: 64, maxWidth: 330,
+        <div ref={legend} style={{ display: "none", position: "absolute", zIndex: 50, left: 56, bottom: 64, maxWidth: 330, pointerEvents: "auto",
           font: "10px/1.5 ui-monospace, Menlo, monospace", color: "#c9d1d9", padding: "6px 8px",
           background: "rgba(16,18,22,0.82)", border: "1px solid #2d333b", borderRadius: 4 }}>
-          <div style={{ color: "#e6edf3", marginBottom: 3 }}>HEAD CAMERA · what MOSS can see</div>
+          <div style={{ display: "flex", alignItems: "flex-start", color: "#e6edf3", marginBottom: legendOpen ? 3 : 0 }}>
+            <span style={{ flex: 1 }}>HEAD CAMERA · what MOSS can see</span>
+            <PanelToggle open={legendOpen} onToggle={() => setLegendOpen((v) => !v)} what="the camera legend" />
+          </div>
+          <div style={{ display: legendOpen ? "block" : "none" }}>
           <div><span style={{ color: COLORS.seen }}>●</span> sees it every frame</div>
           <div><span style={{ color: COLORS.marginal }}>●</span> sees it on some frames (small, or at range)</div>
           <div><span style={{ color: COLORS.small }}>●</span> can't see it: too few pixels at this range</div>
@@ -276,6 +285,7 @@ export function CamOverlay({
           <div style={{ color: "#8b949e", marginTop: 3 }}>
             The simulator's explanation, from where things really are — not MOSS's own belief.
             Teal wedge: the camera's view on the floor. Blue cone: the wrist depth camera (0.6 m).
+          </div>
           </div>
         </div>
       </Html>

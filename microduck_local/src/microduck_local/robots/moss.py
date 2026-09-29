@@ -760,6 +760,19 @@ DEPTH_MIN_RANGE_M = 0.52
 #: 10 Hz, the lab's detector default. NOT his: nothing here has measured what
 #: his Jetson gets out of a D455 through dimOS.
 CAMERA_RATE_HZ = 10.0
+#: **THE DEPTH, as a scan** (2026-09-28). The D455f's depth stream read the
+#: way ROS's `depthimage_to_laserscan` reads one: the image row through the
+#: optical axis, one range per column. The lens is level, so that row is a
+#: horizontal slice of the room 75 mm off the floor — it sees walls, boxes
+#: and an upright can, and passes over a lying can (66 mm) and a cap. Toys
+#: stay the RGB detector's; this is for the room. Mounted as a `LidarSensor`
+#: on `CAMERA_BODY` (a forward fan, `centred=True`), so the lab's scan
+#: plumbing — the brain's `senses.lidar`, the frame's `sensors.lidar`, the
+#: /sim overlay — carries it with nothing new.
+#: [datasheet, NOT measured on his camera] depth field 87 x 58 deg, ideal
+#: range 0.6-6 m; the near floor is `DEPTH_MIN_RANGE_M` above.
+DEPTH_SCAN_RAYS = 88
+DEPTH_MAX_RANGE_M = 6.0
 
 # ------------------------------------------------------------ the ARM camera
 #
@@ -2208,14 +2221,17 @@ class MossBody(BodyBase):
         return MossDriver(model, prefix)
 
     def make_sensors(self, model, prefix: str, *, presets, targets, seed) -> dict:
-        """MOSS's one aperture: the RealSense up front, as a detector.
+        """MOSS's one aperture: the RealSense up front, as a detector —
+        and, when the scenario gives it a range preset, its DEPTH as a scan.
 
-        There is no lidar and no range sensor — his chassis carries neither,
-        and the Pi variants on his BOM (a Mighty camera, an ST time-of-flight
-        board) are experiments he has not built. So a MOSS in a room has a
-        camera and nothing else, which is exactly what `tof: null` in a
-        scenario means: the lab falls the brain back to `script` unless the
-        scenario asks for a detector.
+        There is no lidar — his chassis carries none, and the Pi variants on
+        his BOM (a Mighty camera, an ST time-of-flight board) are experiments
+        he has not built. The range sensor is the RealSense's own depth
+        stream, mounted as `lidar` (`DEPTH_SCAN_RAYS`' comment) when the
+        scenario's `tof` field names a preset, which is the field's meaning
+        on every body (the range-sensor preset). `tof: null` is a MOSS with
+        the colour stream only: the lab falls the brain back to `script`
+        unless the scenario asks for a detector.
 
         The lens is the D455's datasheet RGB field, NOT
         `DetectorSpec.from_env()`: `MICRODUCK_CAMERA` is a knob for the
@@ -2249,6 +2265,18 @@ class MossBody(BodyBase):
                                   rate_hz=ARM_CAMERA_RATE_HZ),
                 noise=DetectorNoise.preset(preset), targets=targets,
                 seed=seed())
+        # The depth, AFTER both detectors: `seed()` draws off the world's RNG
+        # and a draw before theirs would reseed every detector in every
+        # measured moss-yard run.
+        depth = presets.get("tof")
+        if depth is not None:
+            from ..sensors import LidarNoise, LidarSensor
+            out["lidar"] = LidarSensor(
+                model, prefix + CAMERA_BODY, n_rays=DEPTH_SCAN_RAYS,
+                fov_deg=CAMERA_HFOV_DEG, max_range=DEPTH_MAX_RANGE_M,
+                min_range=DEPTH_MIN_RANGE_M, rate_hz=CAMERA_RATE_HZ,
+                noise=LidarNoise.preset(depth), seed=seed(),
+                base_body=prefix + BASE_BODY, centred=True)
         return out
 
     def frames(self) -> RobotFrames:
