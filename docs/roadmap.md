@@ -17782,9 +17782,41 @@ same body — forcing it would carry air, the documented "lift, stow and release
 nothing 24 times in 300 s"; and a probe that read `_pinched` at grab time,
 before the rise sets it, made it look unset when it was not).
 
-**Still 14/24 left, and the next lever is CENTRING.** The offset at the close
-is 5-12 mm where a butt sits at 2 mm, and the bench curve is steep: 9/9
-centred, 6/9 at 10 mm, 2/9 at 20 mm.
+**CENTRING IS NOT THE LEVER — I predicted it was, and four measurements say
+no** (2026-09-29, 24 paired seeds each, card0 at 10/24 as shipped).
+
+The prediction came from the bench curve (9/9 centred, 6/9 at 10 mm, 2/9 at
+20 mm) and a real, systematic bias: the card ends up BEHIND the pad midpoint
+every single time, -3.8 mm at 0.18 m of reach and -13.1 mm at 0.24 m, while
+the sideways error stays noise. The cause is real too: for a card — the only
+object getting the deep descend — the arm leans on the floor, so the ROVER
+drifts 4.5-7.4 mm and the arm falls 6-8 deg short of its commanded pose, where
+every other object sees 0.0 mm and 0.2-0.5 deg. Shallower descends remove it
+monotonically (at -0.002 the rover moves 0.1-0.8 mm and the arm 0.3-0.4 deg).
+
+And none of it helps, because **the offset is part of the jam that lifts the
+card, not an error in it**:
+
+| intervention | card0 | binned |
+|---|---|---|
+| press less (-0.006 instead of -0.014) | **0/24** | 99 v 113 |
+| closed-loop trim at the bottom, removing the bias | 6/24 | 110 v 113 |
+| aim 8 mm nearer | 10/24 | 109 |
+| **shipped** | **10/24** | **113** |
+| aim 8 mm further | 5/24 | 102 |
+
+The press is the grasp: take it away and the card is never picked up at all.
+The shipped aim sits at a local optimum in both directions. The bench curve
+does not transfer because its "centred" cases were a different grasp mode —
+pads pressed into the floor by a directly-commanded arm with a long settle,
+which the room cannot reproduce.
+
+**So the next lever is NOT tuning this primitive.** Each of the four knobs
+above is now known-null or known-worse. What is left is a different grasp:
+`MossKinematics.solve` pins the tool straight down, so the pads always meet a
+flat card face-on. A tilted wrist — a pad edge reaching under the card rather
+than resting beside it — is a new IK orientation target and the only untried
+mechanism.
 
 **The three fixes, tried one at a time, each measured null** — recorded so the
 next person does not repeat them singly: (moss-yard, 5-6 paired seeds):
