@@ -254,7 +254,11 @@ So, after the POST and before saying "you can watch it":
 2. **Tell them the URL, with the port of the lab you actually launched on.**
    `http://localhost:63317` reads `127.0.0.1:8788` by default; a scratch lab
    needs `?lab=127.0.0.1:8799`. A tab left pointing at the other one is a tab
-   that shows an empty stage while a job runs perfectly.
+   that shows an empty stage while a job runs perfectly. A scratch lab (any
+   port but 8788) keeps its own `lab-state-<port>.json` and **exits by itself
+   after 30 min with no viewer and no training** (`--idle-exit MIN`, 0 =
+   never) — one from a filming session ran three days at ~20% of a core, and
+   its `--fresh` had deleted the main lab's roster. Stop what you start.
 3. **Check again while it is still running**, not after. A chain that finishes
    inside one of your turns was never watched, whatever the log says.
 
@@ -279,11 +283,12 @@ of 63, and a base-locked policy measured 23.7 degrees of chassis turn instead
 of 0.3. The second and third of those happened AFTER the guard existed,
 because it covered some of the flags and read as covering all of them.
 
-### Four ways a measurement here has lied, and the check for each
+### Five ways a measurement here has lied, and the check for each
 
-All four happened on 2026-09-25, in one session, to numbers that were then
-reported as findings. None was a subtle statistical problem; each was an
-instrument that could not answer the question it was pointed at.
+The first four happened on 2026-09-25, in one session, to numbers that were
+then reported as findings; the fifth on 2026-09-28, and it cost a 48-seed
+battery. None was a subtle statistical problem; each was an instrument that
+could not answer the question it was pointed at.
 
 **1. Measuring through your own reimplementation instead of the production
 path.** A probe built `MossPickEnv(...)` directly, so `MICRODUCK_MOSS_PICK_RUNG`
@@ -331,6 +336,22 @@ shipped leg, and 59/60 -> 0/60 inside a probe written to compare policies,
 which set the flag process-wide. Consumers must ask
 `moss_env.obs_env_kwargs(run)` rather than a process environment variable, and
 `test_a_policy_is_evaluated_in_the_observation_it_TRAINED_on` holds that line.
+
+**5. A SENSOR THAT WAS NEVER SAMPLED, behind an overlay that drew it anyway.**
+MOSS's wrist camera had a detector, a `/sim` view cone and a brain reading it,
+and `world/arena` never called `arm_detector.sample` — so `senses.arm_det` was
+None on every tick. A 48-seed A/B of wrist scanning came back **identical, seed
+for seed**, to not scanning; the unit test passed because it handed the brain
+frames by hand. The cone on the map, drawn from the sensor's SPEC, was the thing
+that made it look alive.
+→ *A null that is EXACTLY zero is a disconnected wire, not a result* — an
+intervention that truly does nothing still moves a chaotic sim off its seed.
+And when a test mocks the input, add one that asks the production world for it
+(`test_in_the_yard_the_brain_is_handed_wrist_camera_frames`).
+→ *Draw the instrument from what it DELIVERS, not from its settings.* The same
+overlay drew a wedge from the lens out to the detector's range, claiming floor
+beside the tracks that is below the camera's vertical view; the map now takes
+the reportable band from the robot.
 
 **The habit that catches all of it: plant the regression.** Every test added
 that day was run against a deliberately broken version first — the axis

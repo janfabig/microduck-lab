@@ -4779,6 +4779,22 @@ this stack has none of them.
       a population measurement (probe_contest's warning, in the place it would
       mislead here).
 
+      > **WINDOW NOTE (added 2026-09-24).** Every duel number in this item, and
+      > every row file under `runs/duelgym/`, was measured on 2026-09-10 at
+      > `DUEL_S = 6.0` s and WITHOUT the F.2 own-goal pack, which began shipping
+      > ON five days later (`approach_keepout: 0.20`, 16664ee, 2026-09-15). The
+      > pack costs the gym's own positive control **-7.3% +/- 2.8% SE** of
+      > unopposed resolution at 6 s (paired, 32 episodes x 6 seeds: 93.8% ->
+      > 86.5%), which put a ~13% floor of "our duck never got there" under any
+      > arm measured at 6 s with the pack on. `DUEL_S` is 8.0 s from 2026-09-24
+      > and the control now reads 96.2%. These numbers are therefore on a
+      > DIFFERENT window and a different chase configuration from anything
+      > measured after that date — they are not comparable to a fresh run, and
+      > re-deciding `duel` or `duel_side` on them would be reading two
+      > instruments as one. Nothing here is retracted: the arms were paired
+      > against each other under one configuration, so the COMPARISONS stand;
+      > it is the absolute rates that have moved.
+
       Measured, 40 episodes x 12 seeds an arm, discovery seeds 0-11 and fresh
       100-111, 960 episodes an arm pooled (`runs/duelgym/`):
 
@@ -15380,6 +15396,1093 @@ ships 0.0 and `Chase.DET_MAX_AGE` reads 0.4 off the class. Agent's re-read:
 Rows: `runs/detrate/gym-detage-2hz-b{0,100}.jsonl` (3 arms × 480 episodes each), `runs/detrate/gym-detage-10hz-b0.jsonl` (3 × 480, the control), `runs/detrate/loss2fix/{shipped,p10}.jsonl` (12 seeds each), read against 12av follow-up (1)'s `runs/detrate/gym-ship2-b{0,100}.jsonl` (reproduced bit for bit) and `runs/detrate/loss{10,2}/shipped.jsonl`.
 Committed: `brain/controllers.py` (the knob, ships OFF), `scripts/probe_ball_loss.py` (the event rule), `tests/test_det_freshness.py` (new). **No default moved, no preset, no policy, no `docs/camera-hardware.md` edit.**
 
+### 12aw. Distributional skill-chaining for the last metre: the drawn spawn contains 1 of 758 real handovers, and re-spawning from play is a NO RESULT — because the brain hands the kick a pose it cannot see the ball from (2026-09-23)
+
+Prompted by a soccer-skills video (Unitree G1, RoboCup-style) whose four
+starred ideas map onto three things this workspace already has in weaker,
+analytic form: a **perception alignment model** (we have `sensors/detector.py`
+— a hand-built forward error model, not one learned from MoCap pairs), a
+**whole-body actuator network** (we have BAM, fitted per joint, so it cannot
+express coupled effects), and **distributional skill-chaining**, which we have
+only as hand-drawn spawn windows. DSC is the one that needed no hardware, so
+it is the one that was tried.
+
+**The question.** `lastmetre` (12as) spawns the sensed kick from windows
+somebody drew. Does spawning it from the state the chase brain ACTUALLY hands
+over beat them?
+
+#### A. The drawn spawn contains essentially none of the real handovers
+
+`scripts/kick_gym.py` swing rows gained the whole handover state — the 14
+joints and their velocities, the trunk's height, roll/pitch and its linear and
+angular velocity, and the ball's signed velocity, all in the duck's own yaw
+frame. `scripts/probe_handover.py` scores them against the tip spawn's
+support. 758 right+left swings, 960 gym episodes, 64 s of compute:
+
+| axis | play p10 | median | p90 | spawn draws from | covered |
+|---|---|---|---|---|---|
+| ball ahead (m) | 0.081 | 0.102 | 0.137 | +0.04..+0.16 | **94 %** |
+| ball to the foot's side (m) | 0.020 | 0.055 | 0.097 | +0.01..+0.13 | **92 %** |
+| neck_pitch off HOME (rad) | −0.173 | −0.097 | −0.067 | −0.60..0.00 | 100 % |
+| head_pitch off HOME (rad) | 0.031 | **0.548** | **0.583** | **+0.60..+1.20** | **3 %** |
+| head_yaw toward the foot (rad) | −0.015 | 0.306 | 0.532 | −0.03..+0.03 | **6 %** |
+| \|body linear vel\| (m/s) | 0.050 | 0.065 | 0.085 | 0 (pinned) | — |
+| \|body yaw rate\| (rad/s) | 0.301 | 1.205 | 2.156 | 0 (pinned) | — |
+| max \|joint vel\| (rad/s) | 4.302 | **5.369** | 6.123 | 0 (pinned) | — |
+
+**Inside every windowed axis at once: 1 of 758.** Replicated on an independent
+buffer (seeds 100–115, 745 swings): 3 % / 7 % / 0 of 745.
+
+Two separate failures, and **the ball box is not one of them** — 12b drew that
+well, and it is the axis every previous item worked on. The gaze windows are
+close to DISJOINT from play (spawn side verified off 40 resets of the running
+env: head_pitch +0.611..+1.169 against play's p90 of +0.583; head_yaw ±0.029
+against a median +0.306). And four axes are PINNED: `walk_env.reset` does
+`qvel[:] = 0.0`, measured as exactly 0.0000 on all 40 resets, while play hands
+the skill a duck mid-stride at 5.4 rad/s with the trunk yawing at 1.2.
+
+#### B. …and the reason is that the brain hands the kick a BLIND pose
+
+Reading the recipe's own sensing slot (obs[53], through the real camera), 300
+resets an arm:
+
+| spawn | ball in frame | optical axis down | ball sits | below the axis (half-VFOV 30°) |
+|---|---|---|---|---|
+| the drawn windows | **69.3 %** | 68.3° | 60.3° | median −7.6° |
+| play's gaze (replayed) | **4.3 %** | 35.8° | 69.1° | **median +34.6°, p90 +49.3°** |
+
+So the kick was trained looking 22° FURTHER DOWN than the brain ever looks,
+and at the real handover the ball is outside the frame 96 % of the time. Over
+the buffer the ball needs a median 56° of depression (p10 49, p90 62); the
+shipped gaze reaches ~36°. Azimuth is not the blocker — only 22 % of
+right-foot swings exceed `gaze_bearing_max`.
+
+**The lever is the neck slot, which the gaze never uses.** `ChaseParams
+.gaze_neck` ships at 0.0 with a comment reading *"Ships at 0 because the gaze
+itself is off; if `gaze_still` is ever turned on it must be 1"* — and
+`gaze_still` has been `True` since 2026-09-08 (12c). The precondition was met
+and the value was never updated. `kick_gym --arm`, 40 episodes × 12 seeds:
+
+| arm | swings | fresh at swing (≤0.10 s) | track age median | neck off HOME | whiff |
+|---|---|---|---|---|---|
+| shipped | 383 | **1 %** | **1.40 s** | −0.099 | 6 % |
+| `gaze_neck=1.0` | 386 | **26 %** | 0.16 s | −0.406 | 11 % |
+| + `gaze_bearing_max=1.4` | 397 | **36 %** | 0.14 s | −0.432 | 10 % |
+| + `head_down=1.0` | 387 | 38 % | 0.12 s | −0.436 | 12 % |
+
+A 10× cut in staleness at the swing. The fourth row is the control that
+matters: **`head_down` adds ~2 points for nothing**, which confirms
+`ChaseParams`'s own "raising `head_down` does nothing" — the depth was always
+the neck's to give. The whiff rise is confounded and expected: a deeper neck
+moves the handover off the pose the CURRENT kick was trained on, which is
+exactly the coupling the next section tests.
+
+**A correction, recorded because it nearly closed the line.** The
+`head_down` verdict was first read here as killing the whole gaze idea. It
+does not: that measurement was taken over `lineup`/`settle` frames across a
+match, where the clamp rarely binds, and this one is at the SWING INSTANT,
+where the pitch is precisely what binds. Different population — AGENTS.md's
+denominator rule, in a new costume.
+
+#### C. The A/B: NO RESULT on both buffers
+
+`_lm_replay` in `behaviors/lastmetre.py`, two modes so the two mechanisms
+measure alone: **gaze** (the three gaze joints from a recorded handover,
+everything else the recipe's own) and **full** (the whole configuration,
+velocities, trunk pose and ball). Rows filtered to the recipe's foot, never
+mirrored; world position and yaw not replayed, so `random_yaw` stays in
+charge. Nine runs an arm-set — the tip stage of `kick_right_sensed` off the
+same rung2 warm start and hyperparameters as `lastmetre-land-right-v2`,
+2M steps, 3 training seeds an arm, differing ONLY in the spawn.
+
+Checked before spending the compute: all three arms land on play's own
+medians off the running env (full: max\|joint vel\| 4.44 against the
+right-foot buffer's 4.40, \|wz\| 2.08 against 2.06); opening z-scores under
+rung2's `obs_rms` are max \|z\| 6.3 in ALL arms, nothing like the +65 that ate
+a policy before; and the arms' training curves differ (ep_rew first 124–204
+against baseline's 240–271), so the knob reached the vec-env workers.
+
+Judged on a HELD-OUT buffer (seeds 100–115, no overlap with training's 0–15),
+150 episodes a run a condition. Primary registered before looking: connect
+rate on `play`.
+
+| set | arm | PLAY connect | sd | vs base | play falls | sd | vs base | `drawn` connect |
+|---|---|---|---|---|---|---|---|---|
+| blind handover | baseline | 89.3 % | 2.4 | — | 28.5 % | 7.1 | — | 98.7 % |
+| | gaze | 88.9 % | 1.6 | −0.4 | 20.7 % | 7.4 | −7.8 | 98.4 % |
+| | full | 89.1 % | 6.0 | −0.2 | 25.8 % | 13.7 | −2.7 | 98.9 % |
+| gaze-fixed | baseline | 81.6 % | 2.1 | — | 35.3 % | 5.8 | — | 98.7 % |
+| | gaze | 83.1 % | 5.1 | +1.6 | 29.3 % | 4.4 | −6.0 | 98.9 % |
+| | full | 85.3 % | 4.4 | **+3.8** | 32.0 % | 13.4 | −3.3 | 98.2 % |
+
+**MDE at 3 seeds an arm: connect 8.8 / 9.3 points, falls 22.6 / 20.1.** The
+largest observed gaps are 0.4 and 3.8 on connect, 7.8 and 6.0 on falls. Every
+one sits inside the MDE, so this is **NO RESULT, not "measured off"** — the
+battery could never have seen an effect of this size. To resolve the one gap
+worth testing (full, +3.8 on the gaze-fixed set) takes **~18 seeds an arm**;
+the falls gaps need ~25–34.
+
+Two things it does establish. **No arm lost the old competence** — `drawn`
+connect is 98.2–98.9 % everywhere. And **the gaze-fixed handover is harder for
+every arm** (baseline connect 89.3 → 81.6 %, falls 28.5 → 35.3 %), which is
+consistent with fixing the gaze moving the duck further from the kick's
+training pose, and is NOT evidence that re-spawning fixes it.
+
+#### D. The instrument the session should have had first
+
+`/sim` gained two things that make a belief visible instead of inferred.
+**Props** (`world/scenario.Prop`): an object whose shape, size, mass, colour
+and DETECTOR CLASS the scenario declares, so a new thing to look at is a JSON
+entry rather than a table edit — verified reaching physics, the frame and the
+duck's detector, which reports them as their declared classes. **Ghosts**
+(`duck-viewer/components/SimGhosts.tsx`, behind a toggle): `Tracker.payload`
+now carries `pred` (the acted-on belief, not the last measurement) and
+`sigma`, and the stage draws a translucent blob there, a ring at 1σ, and a
+line to the truth. Drawn as a SPHERE whatever the object is, because the
+detector models every target as a sphere of a radius — a brain does not
+believe in a cube.
+
+Measured with it, 60 s of live 2v2, 4148 ball-belief samples:
+
+| | median | p90 | p99 |
+|---|---|---|---|
+| \|pred − truth\| | **8.3 cm** | 35.9 | 104.6 |
+| error / its own sigma | 1.06 | 2.56 | — |
+
+19 % of samples sit beyond 2σ against the ~14 % a radial error predicts —
+modestly over-confident, not broken. (A single frame showing 8σ was read here
+as a calibration failure before the distribution was taken; it was a tail.)
+The ball is 7 cm across and the sweet spot is 14 × 10 cm, so at p90 the belief
+is wrong by more than the whole spot. **The per-duck spread is 3.6×** on one
+pitch with one brain — d3 4.6 cm against d0 16.6 cm — and some ducks carry
+DUPLICATE ball tracks on 1.9 % of duck-ticks, the association gate birthing a
+second track instead of updating the first.
+
+`scenarios/pitch-solo.json` is the readable version of the pitch for this: one
+duck, one ball, no team and no roster role — `kick_gym`'s premise as something
+you can watch (30 s headless: 0 falls, 2 goals, 20.9 s/min possession).
+
+#### Verdict
+
+**Nothing ships from the spawn.** The DSC hypothesis is not refuted, it is
+unresolved at the seeds run, and re-running it costs ~18 seeds an arm for a
+gap that may be noise. **The session's real finding is C's first table**: the
+brain reads the ball on 1 % of swings because `gaze_neck` is 0, and one
+default change takes that to 26 %.
+
+→ **judge the gaze knob on** fresh-at-swing share and `track_age` at the
+swing (1 % / 1.40 s today), with pair whiff and falls as guardrails on 24
+paired seeds — NOT on the kick's whiff alone, which moves for a reason this
+item explains (the handover pose changes under it) and would need the kick
+retrained at the new pose to read honestly.
+
+→ **judge the spawn on** connect rate against a held-out handover buffer at
+**18+ seeds an arm**, or drop it.
+
+Committed: handover columns in `scripts/kick_gym.py`; `scripts/probe_handover.py`,
+`scripts/eval_handover.py` (new); `_lm_replay` in `behaviors/lastmetre.py`
+(knobs `MICRODUCK_LM_REPLAY`/`_MODE`, both OFF by default);
+`Tracker.payload`'s `pred`/`sigma`; `world/scenario.Prop` + compose + arena
+targets; `duck-viewer` `SimGhosts.tsx` and the prop rendering;
+`scenarios/pitch-solo.json`, `scenarios/ghost-demo.json`.
+**No spawn default moved, no policy shipped, `gaze_neck` NOT yet flipped.**
+Still open: regression tests for props and ghosts.
+
+
+### 12ax. Dribbling, built: the match brain is 1.8 % skill by time, a walked ball beats a kicked one, and four separate reward/spawn traps stood between those two facts (2026-09-24)
+
+A.4 measured the brain's `push` mode — walk THROUGH the ball rather than strike
+it — as better than the kick on every ball measure over 48 paired seeds
+(possession +3.15 s/min, p<0.001, better on 38/48; ball advance +0.080,
+p=0.003). It cannot ship for one stated reason: **"a push has no aim."** Ten
+own goals on the fresh block against none. This is the aim, trained — and the
+four things that had to be measured out of the way first.
+
+#### A. The match brain cannot be the harness (this is why the recipe exists)
+
+`pitch-solo` (one duck, one ball, no opponents), 120 s, the shipped chase brain:
+
+| | shipped | `gaze_neck=1.0` |
+|---|---|---|
+| FINDING the ball | 35.4 s (29.5 %) | 20.7 s (17.3 %) |
+| going to it | 59.1 s (49.2 %) | 75.8 s (63.2 %) |
+| **hitting it** | **2.2 s (1.8 %)** | **1.1 s (0.9 %)** |
+| staying safe | 23.4 s (19.5 %) | 22.4 s (18.7 %) |
+| possession s/min | 12.9 | **27.7** |
+
+**The skill under test is 1.8 % of the run**, and fixing the gaze does not
+rescue the harness: possession more than doubles and hunting all but vanishes
+(turn 7.9 → 0.9 %), and the share that touches the ball HALVES — the time moves
+into `lineup`. A skill that is 1-2 % of its own test cannot be measured there,
+whatever the perception does. `scenarios/pitch-solo.json` is the readable pitch
+(30 s headless: 0 falls, 2 goals, 20.9 s/min possession); the recipe is where
+the measuring happens.
+
+**And the straight push is already solved.** Shipped walker, no training, 60
+clips: ball +0.275 m along a straight command, +0.243 m at 20-29° off — no
+worse off-axis, because the walker is velocity-commanded and the "aim" was
+always free. The real gap is elsewhere: over 50 clips the duck travels 0.60 m
+of a commanded 1.53 while the ball manages 0.29. **Ball/duck ratio 0.55,
+keeping up on 32 % of episodes.** It bumps the ball and walks off.
+
+#### B. Four traps, each measured, none of them the reward's headline term
+
+1. **The trainee could not see its own ball.** At the HOME spawn pose the ball
+   sits **63° off the optical axis** and is in frame **0 %** of steps, so
+   obs[51:55] carried nothing for an entire 6M-step run. Not a weak signal —
+   no signal, and no reward weight reaches it (AGENTS.md: an unsampled state's
+   value is never learned). Fixed in the SPAWN. Measured, 120 spawns a window:
+
+   | neck | head | ball in frame at spawn |
+   |---|---|---|
+   | +0.00 | +0.00 | **0 %** |
+   | −0.20 | +0.55 | 49 % |
+   | −0.30 | +0.70 | 98 % |
+   | −0.38 | +0.97 | **100 %** |
+
+2. **A term that paid 0.988 for the FAILURE and 0.655 for the target.**
+   `gaze_ball` on a bare angle bell rewards a ball KICKED AWAY, because a
+   distant ball is near a level axis. It was also flat where the policy starts
+   (0.000 at spawn AND at target). Fixed by widening to the measured geometry
+   and gating on still having the ball.
+
+3. **The optimum was to stand perfectly still.** With `ball_close` paying 6.0
+   flat, the live checkpoint at 1.66M had `ball_with_me` averaging **exactly
+   0.000 over 4800 steps**, duck travel 0.093 m, ball travel 0.000 m, every
+   episode running the full 400 steps. 6.8 a step for zero risk beat reaching
+   for 20 with a loss terminal attached. **The tell was on the chart the whole
+   time and is the trap this repo already named**: `ep_rew` climbed 142 → 1230
+   while REWARD-PER-STEP sat flat at 6.2 → 6.8. All the apparent progress was
+   episode length.
+
+   **The audit missed it by testing the wrong failure.** "Stood still" under
+   ZERO actions makes the duck collapse, which scores 1.57 and looks safely
+   priced out. A duck that stands COMPETENTLY holds `ball_close` at 0.96 and
+   `flat_feet` at 0.98 and collects ~7. **Audit the failure a competent policy
+   can reach, not the one a dead one falls into.** Fixed by `_going`, which
+   gates every standing-collectable term on the fraction of commanded speed
+   actually being made: re-scoring the standing policy itself, 6.80 → 2.90 a
+   step, `ball_close` 5.77 → 1.38.
+
+4. **Two of the three "gait" terms do not measure the gait.** Added to stop a
+   hop and measured afterwards: `flat_feet` scores the hopper 0.91 against the
+   walker's 0.93 (it reads sole flatness ON CONTACT, not airtime), and
+   `keep_pace` scores the hopper 0.24 against the walker's 0.18 — the hop
+   tracks the commanded velocity BETTER. A comment claiming `flat_feet` priced
+   the flight phase was written and is corrected in the file. The flight phase
+   needed its own term (`no_flight`, −0.32 a step on the hopper, −0.01 on the
+   walker).
+
+#### C. The result, and what the warm start cost to get
+
+From scratch the recipe works and invents its own gait; warm-started from the
+walker it keeps the walk. Deterministic exports, 20-30 episodes:
+
+| | airborne | trunk | falls | duck | ball | ratio |
+|---|---|---|---|---|---|---|
+| shipped `alpha_walking` | 0 % | 0.119 | 0/20 | 0.61 m | 0.38 m | 0.67 |
+| from scratch (6M) | **12 %** | 0.104 | 0/20 | **2.21 m** | **2.12 m** | **0.97** |
+| warm start @HOME (6M) | **0 %** | **0.118** | 0/20 | 0.84 m | 0.66 m | 0.74 |
+
+The from-scratch policy dribbles best and does it with a crouched hop (10-12 %
+airborne where the walker is 0 %, trunk 1.6 cm low, stepping 2.7x as often —
+92 support swaps a clip against 34). The warm start keeps the walker's gait
+exactly and dribbles less far. **Neither is strictly better; the choice is
+which you are buying.**
+
+**The warm start is only possible because of a normalizer repair, and the
+first attempt without one FAILED.** A donor trained on locomotion has never
+seen a ball or a target, so its `VecNormalize` carries ~1e-4 variance on those
+command slots:
+
+| block | donor std | task std | ratio | max \|z\| |
+|---|---|---|---|---|
+| obs[51:55] the ball | 0.009-0.042 | 0.19-0.42 | 9-48x | 115 |
+| obs[55:58] a target | 0.0029 | 0.10-0.44 | **120-156x** | **352** |
+
+The effect is not subtle: **writing ±1.0 into obs[55:58] took the shipped
+walker from 400/400 steps to 30**, and blanking exactly those three slots
+before inference restored exactly 400/400. `lastmetre` met this and chose to
+train from scratch rather than face it ("a bearing of 1.0 would enter the
+network at ~34"). `scripts/repair_warmstart_norm.py` measures it (`--dry-run`)
+and overwrites those slots from the new task's own rollouts — which discards
+nothing, because the donor's numbers there describe keep-alive noise from a
+task with neither object.
+
+**And a correction worth its own line: the trainer does NOT freeze the
+normalizer on `--init-from`.** Nothing sets `venv.training = False` and a
+loaded `VecNormalize` returns `training=True`. So an unrepaired warm start is
+not permanently wrong — it is wrong for as long as the running statistics take
+to move, which at 1e-4 variance is long enough to destroy the policy first.
+Repairing skips a transient; it does not fix a freeze. (Measured on a second
+task by the MOSS session the same night: a rung-0 → rung-2 band shift came out
+at max \|z\| 3.66, and chaining WITHOUT repairing trained fine. The ratio
+column is what decides it, not the principle.)
+
+**Two spawn-pose findings from the failed deep-gaze warm start**, both of
+which cost a run before being measured: the warm start fell **20/20 by 550k
+steps** having started from a donor that falls 0/20, in all four combinations
+of gaze and spawn velocity — so the spawn was not the trigger and the pose
+statistics were. At HOME the same warm start starts at ep_len 244.7 instead of
+23.8 and never collapses. The price is stated rather than hidden: at HOME the
+ball is in frame 0 % of steps, so the finished walking policy dribbles
+essentially blind (`seen` 1 %), and obs[51:55] is decoration on it.
+
+#### D. Train/deploy disagreement has at least three distinct causes here
+
+Collected because they look identical from the outside and only a slot-by-slot
+diff at the tick that matters separates them:
+
+* **the observation lying** — 12as, a sensed kick trained at 70 % in frame and
+  deployed at 17 %;
+* **the handover POSE differing from the env's reset** — 12aw's 3 % gaze
+  coverage, and the kick trained 22° further down than the brain ever looks;
+* **the env never sampling the state at all** — B.1 above, and the spawn that
+  contains 1 of 758 real handovers (12aw).
+
+→ **judge the dribble on** airborne share against the walker's 0 %, and on
+targets reached per clip once the target course is run (BUILT and audited,
+NOT yet trained — it waits on the lab), NOT on ball/duck ratio alone — a ratio
+near 1.0 is reachable by a hop that covers three times the ground and by a walk
+that covers a third of it, and it cannot tell them apart.
+
+Committed: `behaviors/dribble.py` (new), `terminate_fn` on `Behavior` (additive,
+defaults None), `scripts/repair_warmstart_norm.py` (new),
+`scenarios/pitch-solo.json`. No default moved outside the recipe;
+`gaze_neck` NOT flipped (12aw's lead is still open).
+
+#### F. The ghost never came back — SUPERSEDED IN PART BY G, read both (2026-09-24)
+
+> **Correction, same day (G below).** The finding that holds is the LAST one
+> here: the perception path is unused. The MECHANISM claimed below — that the
+> policy declines sight because looking pays +5.4 and costs −238.6 — was
+> measured at n=12 on `ed5413`, a run later shown to have been DEGRADING under
+> a hot learning rate. At n=40 paired the figure is −104.6 ± 121 (not
+> resolved), and the donor that run started from already looked 24 % of the
+> time against its 6.6 %. Read the numbers below as what a decaying policy
+> priced, not as the reward's design.
+
+The nudge (option 2 of the "make the task require sight" pair — something knocks
+the ball off-line mid-clip, so a blind policy loses it and a seeing one recovers)
+was trained into `teach-dribble-ed5413`, warm-started from the repaired walker.
+It does not work, and the measurements say why with no ambiguity left.
+
+**The duck looks LESS the longer it trains.** Same recipe, same nudge, 30
+deterministic clips each, early checkpoint against late:
+
+| | 237 k (`b824be`) | 2.93 M (`ed5413`) |
+|---|---|---|
+| ball in frame | **11.1 %** of steps | **6.6 %** |
+| optical-axis depression | 18.3° | 15.4° |
+| ball below bottom of frame | 30.2° short | **37.8° short** |
+| falls | 23 % | 7 % |
+| targets reached | 0.30/clip | 0.87/clip |
+
+It gets better at the task and worse at seeing, in the same gradient.
+
+**Why: the spawn gaze is a transient the policy spends 0.8 s erasing.** Pinned
+at neck −0.45 / head +0.95 (the ball IS in frame at t=0):
+
+| step | head offset | axis depression |
+|---|---|---|
+| 0 | +0.950 | 80.1° |
+| 5 | +0.596 | 60.9° |
+| 10 | +0.333 | 47.7° |
+| 40 | +0.261 | 30.0° |
+
+72 % of the offset is given back inside 40 steps. This is why a gaze ladder
+barely moves the sighting rate — every rung converges to the same head pose
+(seen 11.1 % at HOME, 14.6 % at the deepest rung, and pitching the head down
+54° buys only 5° of the shortfall).
+
+**The arithmetic, per episode, from `reward_sums` (12 clips each):**
+
+| term | HOME gaze | DEEP gaze | delta |
+|---|---|---|---|
+| `gaze_ball` | 39.1 | 44.5 | **+5.4** |
+| `stay_upright` | 730.5 | 461.3 | **−269.2** |
+| TOTAL | 1790.5 | 1552.0 | **−238.6** |
+| ep_len | 382.1 | 243.8 | −138.2 |
+
+Looking at the ball is worth **2 %** of what it costs. `ep_rew` is a SUM, so a
+shorter clip forfeits every ungated per-step term — `stay_upright` alone. The
+policy is behaving optimally; the reward is wrong. `gaze_ball` carries weight
+4.0 but is gated on `_doing`, which delivers 2.2 % of episode reward: a term
+that large reading that small is the same standing-optimum gate that had to be
+taken OFF `stay_upright` in D, applied to the wrong term.
+
+**And the channel is disconnected anyway.** Blind the detector entirely
+(`MICRODUCK_BALL_VFOV_DEG=2`, sighting rate 0.0 %) at the pinned deep gaze,
+20 clips a side:
+
+| | seeing (12.1 % seen) | blind (0 % seen) |
+|---|---|---|
+| full clips | 7/20 | 7/20 |
+| targets/clip | 0.70 | 0.70 |
+| ep_len | 231.2 | **250.9** |
+
+Identical, and marginally better blind. **The perception path is currently
+unused** — the ball slots are decoration, and no gaze weight fixes that, because
+a task solvable blind can only ever BUY a head tilt, never need one.
+
+→ the nudge failed for a reason the nudge cannot fix: `DRIBBLE_LOST` ends the
+clip when the ball leaves 0.45 m, which deletes the only state in which sight
+pays — the duck never has to RE-FIND anything, it just gets a fresh episode.
+**The lever is the termination, not the pay.** Before spending another 6 M
+steps: stop terminating on lost, require recovery, and ungate `gaze_ball` so
+looking is not free to abandon. Until a policy is measurably WORSE blind, the
+ghost is a drawing.
+
+#### G. The corridor was built, and the dribble is solvable with ZERO ball information (2026-09-24)
+
+F's fix shipped: `terminate_fn` `_dribble_lost` -> `_dribble_gone` (0.45 -> 1.20 m),
+`ball_seek` 3.0 on approach speed, `gaze_ball` off `_doing` onto
+`_engaged = max(_doing, _closing)`. Twelve tests, each checked against the
+planted regression it exists for. Then eight training arms, and three results
+that matter more than the fix.
+
+**1. The first run collapsed, and it was the LEARNING RATE, not the recipe.**
+`--steps` feeds `linear_decay` through `progress_remaining`, so a 6 M budget
+pins the LR near 2e-4 for the whole early phase instead of decaying. Eight
+arms, same donor:
+
+| arm | `--steps` | recipe | ep_len after 80 k |
+|---|---|---|---|
+| old-s1 / old-s2 / old32-s0 | 400-600 k | corridor off | 166 / 145 / 153 |
+| new-s1 / new32-s0 | 400-600 k | corridor ON | 212 / 257 |
+| noseek-s1 / noseek-s2 | 600 k | corridor, seek 0 | 250 / 172 |
+| **lr6m-s0** | **6 M** | corridor ON | **15.7 — COLLAPSED** |
+
+`lr6m-s0` was then allowed to run its full 6 M: it NEVER recovers. ep_len
+crawls 26 -> 55 over six million steps while reward-per-step climbs to **9.3
+against a healthy arm's ~5.0** — the sum-versus-rate basin this repo already
+has a name for, entered and never left (55 x 9.3 = 512 of return against
+375 x 5.0 = 1875). `ball_seek` reads 0.000 the whole way: the policy never
+once enters the corridor the run was launched to exercise. So this is not a
+transient shock that training walks off — once the walking prior is destroyed
+at a hot LR, a decaying LR does not rebuild it.
+
+An INTERACTION, not the LR alone: `ed5413` ran the same 6 M schedule on the old
+recipe and held. The corridor introduces states the warm-started policy has
+never seen, and a sustained 2e-4 turns that novelty into a blow-up. A
+lab-launched `/teach` job cannot set the LR, so any recipe that adds a new
+state region needs `--lr-start` or a donor already adapted to it.
+
+**2. F's headline was measuring a decaying run.** F reported that the duck
+"looks LESS the longer it trains" (in frame 11.1 % at 237 k -> 6.6 % at 2.9 M)
+and priced the gaze trade to explain it. Exporting the repaired donor and
+probing it — which should have come first — gives the baseline that claim
+needed:
+
+| | donor | corridor off 400 k | corridor ON 400 k | ed5413 2.9 M |
+|---|---|---|---|---|
+| ball in frame | **24.1 %** | 25.5 % | 30.0 % | **6.6 %** |
+| full clips | 77 % | 97 % | 93 % | 47 % |
+| ball lost | 0 % | 3 % | 0 % | 47 % |
+| falls | 23 % | 0 % | 7 % | 7 % |
+
+The donor already looks 24 % of the time. `ed5413` did not discover that
+looking is a bad deal — it degraded below its own starting point on every axis
+under the hot LR. F's reward arithmetic (+5.4 against -238.6) was measured on
+that decaying policy at n=12 and does not survive n=40 paired (-104.6 +/- 121).
+**The sign was right and the story was not.**
+
+**3. The conclusion that survives all of it.** Blind the detector (VFOV 2 deg)
+against the corridor-trained policy — instrument verified this time, 288-316 of
+400 frames carry non-zero ball slots seeing against 0 blind, max obs diff 1.0:
+
+| | seeing | blind |
+|---|---|---|
+| full clips | 28/30 | 28/30 |
+| targets/clip | 0.40 | 0.37 |
+
+And the corridor is genuinely exercised — the ball is out of the band 16.7 % of
+steps with 6 recoveries over 20 clips, so this is not an unreachable
+intervention. **Recovery simply succeeds blind.** The ball is never more than
+0.66 m away, the twist command points forward, and walking finds it.
+
+#### H. THE ANSWER: the command was the oracle. An ablation found it, and steering on the BELIEF flips the sign of sight (2026-09-24)
+
+G's closing line said the lever was a displacement big enough that walking
+forward could not undo it. That was wrong, and the measurement that shows why
+took ten minutes and should have come first.
+
+**Where the information actually was.** `_dribble_command` read
+`env.data.qpos[ball]` — the ball's TRUE position — placed the dribble spot from
+it, and published the resulting heading into obs[48:51] every step. The
+commanded yaw correlates **+0.642** with the true ball bearing. A permutation
+ablation settles which channel the policy rides (each channel's INFORMATION
+destroyed by resampling from its own marginal, so a collapse cannot be blamed
+on distribution shift — a ZEROED obs[55:58] once took a healthy walker from
+400/400 to 30 steps for that reason alone; 30 clips):
+
+| channel destroyed | full clips | ball lost | targets |
+|---|---|---|---|
+| nothing | 28/30 | 0/30 | 0.40 |
+| CAMERA obs[51:55] | 28/30 | 0/30 | 0.37 |
+| ball->target obs[55:58] | 28/30 | 0/30 | 0.53 |
+| **commanded twist obs[48:51]** | **20/30** | **8/30** | 0.43 |
+
+So the camera was never redundant because perception is hard — it was redundant
+because **an oracle was already telling the policy where the ball was**, through
+the command channel, every step. No reward gate (F), terminal (G) or
+displacement could have touched that: however far the ball is knocked, the
+command keeps pointing at it.
+
+It is also a SIM2REAL defect and not merely an experiment-design one. On the
+robot `Chase` steers on the DETECTOR's estimate; a policy trained against truth
+has learned to trust a command that is wrong exactly when the detector is
+stale, which is the only moment it matters.
+
+**The fix.** `_ball_believed` — the command and the published ball slots are
+built from the tracker's own estimate (`_lm_world`, the thing the viewer draws
+as the ghost), never `qpos`. Rewards still read truth, which is allowed: the
+rule is that a policy must be able to OBSERVE what it is paid for, and the ball
+is observable through the camera. `MICRODUCK_DRIBBLE_ORACLE=1` restores the old
+path so the A/B is one knob. Commanded-yaw correlation with the true bearing
+falls **+0.544 -> +0.223**, and the residual is the honest part: when the duck
+HAS seen the ball, the command points at it.
+
+**The sign of sight flips.** Same policy, no retraining, 24 clips a cell:
+
+| command | spawn gaze | belief present | `ball_with_me` | targets |
+|---|---|---|---|---|
+| ORACLE | head up | 42% | **181.8** | 0.50 |
+| ORACLE | default | 87% | 122.2 | 0.33 |
+| ORACLE | deep | 100% | 137.4 | 0.29 |
+| BELIEF | head up | 45% | **53.3** | 0.08 |
+| BELIEF | default | 84% | **113.2** | **0.46** |
+| BELIEF | deep | 100% | 114.8 | 0.21 |
+
+Under the oracle, looking was a MISTAKE — head up outscored deep 181.8 to
+137.4, which is F's whole arithmetic restated as a cause rather than a
+mystery. Under the believed command, looking is worth **2.1x the ball progress
+and 5.8x the targets**. Nothing was trained to produce that: it is the task
+changing, not the policy.
+
+**Two traps this opened, both measured before training.**
+
+1. *The fallback was the leak again.* The first version commanded "walk forward
+   at the drawn speed" when there was no sighting — which is exactly G's
+   finding (the ball is never far and the command points forward, so walking
+   finds it) handed straight back. It is now a ZERO command, which prices
+   itself with no new term: `_going` divides by the commanded speed and returns
+   0, so `_doing` and every dribble term go with it. Not knowing where the ball
+   is earns `stay_upright` and nothing else.
+
+2. *The spawn gaze made the task impossible.* With the command believed, a
+   spawn with the ball out of frame is a spawn with NO steering. The old
+   default window put the ball in frame on **2 of 100 spawns** — under the
+   oracle that cost nothing, under a belief it is 98% of episodes with no
+   command at all, which is the unsampled-state trap this repo has paid for
+   twice. Measured window ladder (60 resets each): DRILL -0.45,-0.30 / 0.90,1.05
+   = 100%; DEEP -0.45,-0.15 / 0.65,1.10 = 98%; -0.40,-0.10 / 0.50,1.10 = 88%;
+   **-0.35,-0.05 / 0.40,1.10 = 67% (the new default)**; -0.30,0 / 0.25,1.10 =
+   60%; the old -0.25,0 / 0,0.60 = 2%. The default is the TOP rung because
+   `--init-from` disables the curriculum, so a fine-tune never sees a stage knob.
+
+**TRAINED, and the ghost is load-bearing.** `adapt-belief-s0`, 800 k at a
+decaying LR from the repaired walker (the cool schedule is deliberate — see
+G.1). Blind the detector against it, paired by seed, n=40:
+
+| | seeing | blind | paired delta |
+|---|---|---|---|
+| targets / clip | **0.475** | **0.150** | **+0.325 +/- 0.097 SE — RESOLVED** |
+| ball lost | 5% | 15% | -0.100 +/- 0.070 (not resolved at n=40) |
+| ball in frame | 35.3% | 3.9% | |
+
+Sight helped on **11 of 40 clips and hurt on 0**. This is the first
+measurement in F, G or H where taking the camera away costs anything at all,
+and it took 800 k steps rather than 6 M. In-frame is 35.3 % against the
+donor's 24.1 % and `ed5413`'s 6.6 %.
+
+The loss-rate arm is the honest caveat: 5% against 15% is the right direction
+and ~n=80 would settle it. The primary metric was registered before looking:
+targets a clip, because the ball arriving somewhere on purpose is the task.
+
+`teach-dribble-210ecb` carries it to 6 M from `dribble-belief-donor`, warm
+started off the ADAPTED policy rather than the raw walker, because the lab
+cannot set a learning rate and a 6 M `--steps` schedule would meet a novel
+state region at ~2e-4 — which is exactly what killed `lr6m-s0`.
+
+**The 6 M continuation finished, and 800 k is THE PICK.** `teach-dribble-210ecb`
+carried the adapted policy to 6 M cleanly — ep_len 110 -> 366, no collapse,
+0.4 % airborne, walker gait intact — and sight is still load-bearing there
+(targets/clip **0.650 seeing vs 0.350 blind, +0.300 +/- 0.130 SE, RESOLVED**,
+helped 11 clips and hurt 4). But the extra 5.2 M steps bought nothing
+measurable and cost the perception. Paired by seed, n=40, both seeing:
+
+| | 800 k donor | 6 M | paired |
+|---|---|---|---|
+| targets / clip | 0.475 | 0.650 | +0.175 +/- 0.133 — NOT resolved |
+| ball lost | 5 % | 15 % | +0.100 +/- 0.070 — not resolved |
+| ball in frame | **31.5 %** | 21.1 % | |
+| **ghost error, median** | **2.5 cm** | **21.7 cm** | |
+
+The ghost's own error is the number that decides it: the 6 M policy's belief is
+**nine times staler**, because it looks less and the held estimate ages. So the
+"looks less the longer it trains" drift from F is still there — but it is no
+longer FREE, and that is the difference the fix made. Under the oracle the
+drift cost nothing and so nothing stopped it; under a believed command it shows
+up as a 21.7 cm error in the quantity the policy steers on.
+
+`runs/dribble-belief-donor` carries `--pick`, and `210ecb` says in its own note
+that it is not the pick — a finding that only lives in this file is one the
+palette's play button will contradict (12ax: "a finding must reach the
+artifact"; the G1 kick chain shipped its worst rung this way).
+
+→ this also re-states the early-plateau pattern with a sharper stopping rule:
+the probe to stop on is not the reward curve but the GHOST ERROR, because that
+is what degrades first and it degrades while `ep_len` and targets still look
+fine.
+
+**WHAT IS ACTUALLY LIMITING THE DRIBBLE: the duck cannot turn.** Watched in the
+lab, the user's read was "the ball is going all over the place and it hasn't
+learned much". Half of that is the NUDGE — 4.3 invisible knocks a clip take the
+ball's path from 0.55 m to 1.13 m, so most of the ball's motion is the
+adversary, not the touch. The other half is correct, and the decomposition says
+why (bam, no knock, 20 clips):
+
+| | |
+|---|---|
+| ball distance, median | **0.268 m** (the recipe wants 0.13) |
+| `_near` / `_going` / `_doing`, median | 0.149 / **0.051** / **0.000** |
+| **ball speed toward the target** | **+0.002 m/s** (paid up to 0.35) |
+| duck speed vs COMMANDED | 0.189 vs 0.185 m/s — it OBEYS |
+| angle, duck velocity to ball->target line | **median 73 deg** |
+| **commanded |yaw rate| at its clip** | **58 % of steps** |
+| duck behind the ball (the good side) | 43 % |
+
+The policy is obedient and the ball still goes nowhere, because the STEERING is
+saturated: `DRIBBLE_TURN_MAX = 0.15` rad/s is **8.6 deg/s**, so turning the
+median 73 deg takes 8.5 s and the clip is 8 s. The duck physically cannot get
+behind the ball. Raising the clip works and falls over:
+
+| turn gain,clip | deg/s | fell | ball->target m/s |
+|---|---|---|---|
+| 0.4,0.15 (shipped) | 9 | 2/20 | 0.002 |
+| 0.6,0.3 | 17 | 4/20 | -0.001 |
+| 0.8,0.5 | 29 | **16/20** | 0.023 |
+| 1.0,0.7 | 40 | 16/20 | 0.042 |
+
+20x the ball progress for 8x the falls. And narrowing the DEMAND instead is
+free — `DRIBBLE_TARGET_BEARING` 57 deg -> 6 deg takes ball progress
+0.002 -> 0.023 m/s and targets 0.20 -> 0.40 with falls flat at 1-2/20 — but it
+is still a tenth of the paid rate, so it is a mitigation and not the fix.
+
+→ **the missing sub-skill is walking while turning.** The task needs ~30 deg/s
+and this policy tolerates ~9. That is a physics/curriculum gap, not a reward
+one, and the rule this repo already owns applies: ladder the commanded yaw rate
+until the policy can hold it, THEN give the steering law the authority it needs.
+Nothing in the reward can buy a turn the body cannot make.
+
+→ and the process lesson, which is mine: `DRIBBLE_TURN_MAX` was backed 0.8 ->
+0.15 earlier the same day to stop the walker folding, and that fix was never
+checked for whether the REMAINING authority could still do the job. "Check a
+knob's reachable set" was applied to the fall and not to the task. A knob
+lowered until a failure stops can lower the ceiling past the thing you wanted.
+
+**THE TURN LADDER: a NEGATIVE result on a pre-registered metric, and it found
+the real defect.** `turn_track` added (the `run` recipe's own
+`_run_track_ang`, retargeted — nothing here paid for tracking `twist_cmd[2]`),
+`MICRODUCK_DRIBBLE_TURN` made a stage knob, and a warm-started chain off the
+800 k pick at 9 -> 17 -> 29 deg/s, 800 k a rung at a decaying lr.
+
+Registered BEFORE the runs finished: credit only if, at clip 0.8,0.50 on bam
+with no knock, falls <= 4/20 AND ball->target >= +0.023 m/s.
+
+| at 0.8,0.50, 20 clips | falls | ball->target | angle | ep_len |
+|---|---|---|---|---|
+| baseline (800 k pick) | 16/20 | **+0.023** | 66 deg | 211 |
+| rung 1 (9 deg/s) | 10/20 | +0.016 | 70 deg | 216 |
+| rung 2 (17 deg/s) | 6/20 | -0.008 | 92 deg | 365 |
+| **rung 3 (29 deg/s)** | **2/20 PASS** | **-0.004 FAIL** | 93 deg | 382 |
+
+**NOT CREDITED.** The ladder banked a real capability — the duck can be
+commanded 29 deg/s without falling, 16/20 -> 2/20, episodes 211 -> 382 — and
+the dribble did not move. The registered note said what that reading is: the
+ladder bought safety and not skill, so **the turn was never the binding
+constraint.**
+
+**What is.** Decomposing rung 3 by the steering law's own two branches:
+
+| | share of steps | ball->target |
+|---|---|---|
+| PUSH THROUGH (duck behind the ball, spot = the target) | 47 % | **+0.040 m/s** |
+| COME ROUND (overran it, spot 0.14 m behind the ball) | 53 % | **-0.043 m/s** |
+
+0.47 x 0.040 + 0.53 x -0.043 = **-0.004**, the net exactly. **The dribble
+works; the come-round undoes it.** The duck walks its loop THROUGH the ball and
+pushes it backwards at the same rate it earned going forward.
+
+→ and the optimiser cannot see any of that. `_ball_with_me` reads
+`clip(ball.u, 0.0, TARGET)`, so **pushing the ball BACKWARD scores identically
+to not touching it**, and `_ball_overshoot` only docks progress ABOVE the
+target speed. Half the clip is invisible to the reward. That is this repo's
+oldest shape in new clothes — a term that cannot see the failure it is supposed
+to prevent — and it is why 2.4 M steps of laddering moved falls and not the
+ball.
+
+→ next, in order: price backward ball progress (it is currently FREE), then fix
+the come-round path so it does not cross the ball. Neither is a training
+change; both are a line each. The turn ladder is not wasted — the authority it
+banked is what the come-round needs once it stops being counter-productive.
+
+**BOTH FIXES, and the honest split of what each one bought.** `ball_backward`
+(penalty 3.0, the clip-at-zero hole closed) and the come-round spot offset
+0.18 m to the duck's own side.
+
+The GEOMETRY needed no training at all — same policy, same seeds, offset swept:
+
+| round offset | push | come-round | NET ball | falls |
+|---|---|---|---|---|
+| 0.00 m (shipped) | +0.040 | **-0.043** | **-0.004** | 2/20 |
+| **0.18 m** | +0.043 | **-0.019** | **+0.011** | 1/20 |
+| 0.26 m | +0.042 | -0.020 | +0.012 | 1/20 |
+
+The PENALTY was then trained 800 k off `turn-r3`. Against the pre-registered
+primary (NET ball speed >= +0.023 m/s at <= 4/20 falls): **NOT MET, +0.014**,
+and since geometry alone gives +0.011 the penalty added little THERE. The
+penalty also never fell over training — -0.369 a step at 16 k, -0.373 at 803 k
+— so the policy did not learn to stop retreating, it learned around it.
+
+On targets a clip, paired n=40: **0.350 -> 0.525, +0.175 +/- 0.061 SE,
+RESOLVED**, better on 7 clips and worse on 0.
+
+> **The metric error is mine.** NET ball SPEED averages over the whole clip,
+> including recovery and idle; the task is a THRESHOLD COUNT. Every earlier
+> report in this item was judged on targets a clip, and switching primaries for
+> the turn ladder was an inconsistency, not a post-hoc rescue. Both numbers are
+> recorded above so the next reader can pick.
+
+**And a harness disagreement worth knowing about — CAUSE STILL OPEN.**
+`render-rollout` builds ONE env and re-resets it per episode; a
+fresh-env-per-seed probe does not, and the two disagree seed-for-seed: a
+fresh-env probe read 0/40 falls where the render fell on its second clip.
+
+The first explanation here was "env reuse / state the reset does not clear".
+**That is wrong.** Chased down to three fresh processes, one harness each:
+
+    build_env(seed=1) + reset()          seed 1 -> 400 steps
+    build_env(seed=0) + reset(seed=1)    seed 1 -> 171 steps
+    run seed 0 to completion first,
+      then a FRESH build_env(seed=1)     seed 1 -> 400 steps
+
+So there is no cross-episode and no cross-process contamination — the third row
+rules both out — and each row is exactly reproducible. It is the SEEDING PATH
+alone: whether the seed arrives through the constructor or through
+`reset(seed=)`. And at t=0 the two are identical in everything checked:
+`qpos`, `qvel`, the observation, `twist_cmd`, `body_cmd`, `dof_frictionloss`,
+`dof_damping`, `dof_armature`, `actuator_gainprm`, `actuator_biasprm`,
+`geom_friction`, `body_mass`, `data.ctrl`, `data.act`, `data.qacc`,
+`data.qacc_warmstart`, `data.time`, the BAM friction scale, and the two envs do
+NOT share an `MjModel`. No mid-episode command resample fires in either
+(`twist_cmd[0]` is constant for the whole clip in both).
+
+**CAUSE FOUND (2026-09-24, on a lead from the MOSS session): the BAM actuator
+has its OWN rng and `reset(seed=)` does not resynchronise it.** Comparing the
+two paths' generators immediately after reset:
+
+    env._rng   A: 0.528589, 0.459336, 0.062350, ...
+               B: 0.528589, 0.459336, 0.062350, ...   <- IDENTICAL
+    bam._rng   A: 0.144160, 0.948649, 0.311831, ...
+               B: 0.511822, 0.950464, 0.144160, ...   <- B is TWO DRAWS BEHIND
+
+`env._rng` is reseeded properly, which is exactly why the spawn, the gaze draw,
+the spawn velocity and the whole initial observation matched and sent this hunt
+through every state array in the model. The actuator's generator is separate
+and is left offset by two draws. `DelayBuffer.compute` then draws a bus lag
+from it **every physics step** ("one scalar draw per physics step, by design"),
+so the two paths run identical states and identical actions through DIFFERENT
+actuation-lag sequences from step 1, and chaos does the rest.
+
+`MossPickEnv` shows no such effect (fresh and re-reset agree 45/48 both, 0/48
+seed-for-seed) because its reset rebuilds every piece of episode state from the
+seed and touches its rng in exactly one place.
+
+→ NOT FIXED, deliberately, and this is the decision to revisit: reseeding
+`bam._rng` from the episode seed in `reset` would align the paths, and it would
+also CHANGE EVERY ROLLOUT (the lag stream is part of the physics), invalidating
+comparisons against everything measured before it. It should be done at a
+quiet moment with a re-baseline, not in the middle of a curriculum. Until then:
+absolute rates are only comparable within one seeding path, which is why the
+tables in this item name their harness.
+
+→ what it means for every number in this item: a COMPARISON is safe when both
+arms share one harness, which every A/B above does. An ABSOLUTE rate is not
+quotable without naming the harness. The table below is the one-env-re-reset
+condition, which is what training and `render-rollout` use.
+
+Measured there, 40 episodes at clip 0.8,0.50:
+
+| | falls | clips completed | targets |
+|---|---|---|---|
+| the 800 k pick (pre-ladder) | **32/40** | 8/40 | 0.40 |
+| + turn ladder + geometry | **0/40** | 40/40 | 0.42 |
+| + backward penalty trained | 1/40 | 39/40 | **0.55** |
+
+→ so the turn ladder WAS worth it after all, just not for the reason it was
+built: it did not move the ball (its own registered metric, correctly failed),
+and it is what makes 29 deg/s survivable — 32/40 falls to 0-1/40. The
+come-round offset is what moved the ball. Two changes, two different effects,
+and the pre-registration is what kept them from being credited to each other.
+
+**IT IS KICK-AND-CHASE, AND THE REWARD IS NOT THE CONSTRAINT — two registered
+failures say so (2026-09-24).** The user watching the lab said it "blindly
+stumbles and circles the ball" and "randomly hits it sometimes". Measured on
+the trained policy, 30 clips, bam, no knock:
+
+| | |
+|---|---|
+| foot-ball touches | **1.3 per 8 s clip** |
+| ball departure speed per touch | **0.436 m/s** |
+| the duck's own walking speed | **0.193 m/s** |
+| touch AIM, off the ball->target line | median **30 deg**, 70 % inside 45 deg |
+| ball speed between touches | median **0.009 m/s** (parked) |
+
+So it is not blind and the touches are not random — it has learned ONE
+well-aimed strike per clip at 2.3x its own pace, which puts the ball out of
+reach by construction, and then spends the clip in pursuit. The circling the
+user sees is the chase.
+
+**The income audit that explains it** (per step, trained policy):
+
+| term | income | share |
+|---|---|---|
+| `stay_upright` | +1.875 | **36.1 %** |
+| `ball_close` | +0.894 | 17.2 % |
+| `turn_track` | +0.860 | 16.5 % |
+| **`ball_with_me` — the task** | **+0.429** | **8.3 %** |
+
+→ **a weight is NOT an income.** `ball_with_me` carried weight 12 and delivered
+8.3 % because the policy reached 3.6 % of its maximum, while `turn_track` at
+weight 2 delivered 16.5 % by reaching 43 % of its own. Every weight in this
+recipe had been sized by weight RATIOS; the optimiser only ever sees achieved
+values. Audit the achieved per-step income, not the ledger.
+
+**Attempt 1 — rebalance (FAILED its pre-registered bar).** `ball_with_me`
+12->30, `ball_close` 6->3, `stay_upright` 2->1.5, `turn_track` 2->0.5, and
+`ball_overshoot` retargeted from a fixed 0.35 m/s to THE DUCK'S OWN SPEED (a
+ball faster than the duck cannot be kept; the old threshold cost 0.0037 a step,
+a 1600th of `ball_close`, so the strike was free). Task share 8.3 % -> 25.1 %.
+Result: targets a clip **0.550 -> 0.475**, touches 1.38 -> 1.43, departure
+0.425 -> **0.481**. Nothing about kick-and-chase moved.
+
+*(The retarget was itself a no-op on the first try — `max(DRIBBLE_TARGET,
+duck_speed)` pins the threshold at 0.35 for a duck that walks at 0.193, and it
+measured speed ALONG the target line so it missed the roll. Fixed to speed
+magnitude against a 0.10 floor: -0.0037 -> -0.0579 a step, 16x.)*
+
+**Attempt 2 — displacement instead of a velocity product (ALSO FAILED).**
+Attempt 1's curve showed `ball_with_me`'s own value rising **x2.6** while the
+ball advanced no further, because it is a product of INSTANTANEOUS velocities
+and a kick-and-chase policy satisfies it in bursts. So `ball_progress` was
+added at 30.0 — ground made up by the ball toward its target, whose episode SUM
+telescopes to real displacement and cannot be farmed by timing (verified: the
+term's sum equals the measured +0.128 m closed). Result: targets **0.525**
+(-0.025 +/- 0.110 vs baseline, not resolved), touches 1.70, departure 0.470,
+and ground closed **+0.075 m against the baseline's +0.107**.
+
+→ **the conclusion, and it is the useful part.** Across weights, shapes,
+penalties, turn authority, geometry, commanded speed and 4 M steps of training,
+these three numbers do not move: ~1.3-1.7 touches a clip, ~0.43-0.48 m/s
+departure, ~0.1 m of ground closed. A quantity that is invariant under every
+reward change is not reward-limited. The missing sub-skill is **repeated soft
+contact** — the duck has never once made ten gentle touches in a clip, so no
+reward can select for it. This repo's own rule applies and was not followed for
+four attempts: if rollouts never contain the skill you are paying for, ladder
+the PHYSICS, not the pay. The next thing worth trying is a contact drill — the
+ball spawned against the foot, scored on consecutive touches — which builds the
+sub-skill before the full task is asked for. Not attempted yet.
+
+**FOUR ATTEMPTS, FOUR FAILURES, AND THE STRUCTURAL REASON (2026-09-24).**
+Against a pre-registered bar of 0.80 targets a clip (baseline 0.550):
+
+| attempt | change | targets | verdict |
+|---|---|---|---|
+| 1 | weights rebalanced to the income audit | 0.475 | FAILED |
+| 2 | displacement instead of a velocity product | 0.525 | FAILED |
+| 3 | contact drill, 4-rung physics ladder | 0.500 | FAILED, ran BACKWARDS |
+| 4 | displacement gated on retention | 0.450 | FAILED |
+
+Attempt 3 is the instructive one: it trained the touch HARDER (departure
+0.400 -> 0.499 in the drill, 0.460 -> 0.620 on the full task, full clips
+29/40 -> 16/30) because an ungated ball-displacement reward is **maximised by
+kicking** — one strike banks 0.35 m and the clip ending afterwards forfeits
+nothing, since the reward is already banked. Attempt 2 had added a term that
+rewards the behaviour it was meant to remove, and the drill sharpened it.
+Attempt 4's gate (`ball_progress * _have`) reverses the kicker/holder ranking
+before training — the hard-kicking policy's income goes +2.157 -> -1.315 a step
+— and still moved nothing.
+
+Invariant across all four, plus the turn ladder and ~7 M steps: touches
+**1.3-1.8** a clip, departure **0.39-0.62 m/s**, ground closed **~0.1 m**.
+
+**WHY, and it is two physical facts, neither of them the reward.**
+
+1. *The ball is 15 g against a 737 g duck — a 49:1 ratio*, and it is upstream's
+   real 70 mm kick ball (`contract.py`: "the ball the robot ACTUALLY plays
+   with"). Contact runs max out at **0.10 s**. Ball departure speed equals the
+   FOOT's speed at contact (ratio 0.98, r=+0.69), and the foot is at
+   **0.466 m/s** there because it is mid-swing while the body does 0.193. A
+   soft touch is therefore a TIMING skill — contact while the foot is slow,
+   which it is twice a stride.
+
+2. *And the duck is BLIND at touch range.* In-frame rate against ball distance
+   (20 clips): **<=0.15 m -> 2.0 %**, 0.15-0.25 -> 1.6 %, 0.25-0.45 -> 24.3 %,
+   >0.45 -> 36.4 %. It sees the ball when far and cannot see it when close
+   enough to touch — the ball at 0.13 m sits ~53 deg below a level camera and
+   the deepest gaze the policy sustains leaves it 30-40 deg below frame.
+
+→ **so the timing skill's control input does not exist.** No reward can teach
+a policy to time something it cannot observe, which is why weights, shapes,
+gates and a physics ladder all measured null or backwards. Kick-and-chase is
+the CORRECT policy for this ball and this sensor: see it far (36 %), aim (the
+touches are aimed — median 30 deg off line, 70 % inside 45 deg), strike blind
+on timing, re-acquire.
+
+→ the two honest ways forward, and they are different projects:
+  * **Optimise kick-and-chase** rather than fight it — aim accuracy, pursuit
+    efficiency, fewer wasted circles. The behaviour is already near-optimal for
+    the hardware and targets a clip is what would improve.
+  * **Buy sight at touch range first** — a sustained deep-gaze GAIT. The gaze
+    that sees a ball at the feet exists (~80 deg depression at the drill spawn)
+    but costs episode length because the walker cannot hold it; 12ax F measured
+    that cost. Close control is impossible until that is trained, and it is a
+    locomotion curriculum, not a dribble reward.
+
+**THE DEEP-GAZE GAIT: the prerequisite is BUILT and measured, the integration
+is not (2026-09-24, `behaviors/gazewalk.py`).** 12ax H ended with two options;
+this is the second one taken.
+
+**The clamp measurement that made it well-posed.** Holding the head every step
+on the best dribbler (`action` is an offset off `DEFAULT_POSE`, 20 clips):
+
+| head held | ep_len | fell | axis | in frame <= 0.15 m |
+|---|---|---|---|---|
+| the policy's own | 389 | 1/20 | 17.6 deg | **1.9 %** |
+| -0.15/+0.30 | 280 | 7/20 | 34.8 deg | 4.6 % |
+| -0.30/+0.60 | 123 | 19/20 | 56.2 deg | **65.5 %** |
+| -0.45/+0.95 | 56 | 20/20 | 70.6 deg | **91.1 %** |
+
+The camera CAN see a ball at the feet — 1.9 % to 91 % — and the duck falls 19-20
+in 20 trying. Sight at touch range is buyable and the GAIT is what cannot
+afford it: the shipped walker has never balanced a head pitched 60 deg forward.
+
+**`gazewalk` — CREDITED against its bar (>= 45 deg at <= 4/20 falls).** Three
+rungs, 800 k each off the repaired walker, holding 0.30 -> 0.60 -> 0.95:
+
+| at the -0.45/+0.95 hold, 20 clips | ep_len | fell | depression |
+|---|---|---|---|
+| the donor | 23 | **20/20** | 59.8 deg |
+| gaze-g3 | **387** | **1/20** | **62.4 deg** |
+
+A body that walks 387 of 400 steps at 0.199 m/s with its optical axis 62 deg
+down, where the donor cannot stay up for half a second. That is a new
+capability for this robot and the first pre-registered bar met in this item.
+
+**Transfer, twice, and the second one is the useful failure.** A dribble
+fine-tuned from the gait, 1.2 M, against the best level-headed dribbler:
+
+| full task, 40 eps | level donor | from gaze | from gaze+YAW |
+|---|---|---|---|
+| in frame <= 0.15 m | 2.3 % | 11.2 % | **20.5 %** |
+| axis depression | 17.3 deg | 52.3 deg | **56.0 deg** |
+| targets a clip | **0.550** | 0.250 | 0.375 |
+| full clips | 39/40 | 0/40 | **0/40** |
+
+The FIRST attempt exposed an omission worth recording: `gazewalk` commanded no
+yaw, so it trained walk-STRAIGHT-head-down, and the dribble commands up to
+0.50 rad/s — the policy held a 52 deg gaze there and fell 40/40. Two
+capabilities (the turn ladder, the gaze gait) trained separately, each lost when
+the other was. Adding a per-episode yaw command and a `turn_track` at 4.0 took
+in-frame 11.2 % -> 20.5 % and the gazewalk-env falls 13/20 -> 6/20.
+
+→ **what is now true, and it is genuinely new: the deep gaze SURVIVES dribble
+training.** 56 deg held through 1.2 M steps of a reward that priced looking at
++5.4 against -238.6 in F, and the ball at touch range in frame on 20.5 % of
+steps against 2.3 %. The information the four failed reward attempts were
+missing now exists.
+
+→ **what is not: the combined policy falls 40/40 and targets went 0.550 ->
+0.375.** The prerequisite is a regression on the task. The gap is integration —
+the dribble env asks for a head-down gait AND a continuously varying steering
+command AND a ball underfoot, and 1.2 M steps of fine-tuning does not fuse
+them. The next thing to try is the pattern this package already uses
+everywhere else and which I reached for last: ladder the gaze INSIDE the
+dribble recipe as a stage knob with a hold term, so the policy never leaves the
+task, rather than training a separate recipe and transferring into it.
+
+**THE CAPABILITY CHAIN, MEASURED END TO END — and where it breaks (2026-09-24).**
+Seven attempts at "make it dribble". Each failed for a DIFFERENT identified
+reason, and together they map the dependency chain:
+
+| # | attempt | result | why |
+|---|---|---|---|
+| 1 | weights to the income audit | targets 0.475 | task was 8.3 % of income |
+| 2 | displacement not velocity product | 0.525 | a velocity product is satisfiable in bursts |
+| 3 | contact drill (physics ladder) | 0.500, BACKWARDS | displacement is maximised by KICKING |
+| 4 | displacement gated on retention | 0.450 | kicker income reversed, behaviour did not |
+| 5 | gazewalk transfer | 20.5 % in frame, 40/40 falls | gait had no yaw |
+| 6 | hold laddered inside the dribble | 1.6 % in frame, 0/40 falls | laddered the PAY on a body without the gait |
+| 7 | synthesis + ball in the gait | 19.8 % in frame, 39/40 falls | see below |
+
+**What is BUILT and banked.** `behaviors/gazewalk.py`: a duck that walks with
+its optical axis 62 deg down at 1/20 falls where the donor falls 20/20, and —
+after the ball was added to its spawn — **0/20 falls with a ball at its feet,
+400/400 steps**. That is two new locomotion capabilities this robot did not
+have. `runs/gaze-ball` carries it.
+
+**Where it breaks, by controlled test.** The dribble fine-tuned off that gait
+falls 19/20 **with the ball present and 0/20 with the ball teleported away** —
+same env, same steering, same observations. It walks perfectly head-down; it
+cannot do it while ENGAGING the ball.
+
+→ and that is the real tension, stated exactly: `gazewalk` teaches walking PAST
+a ball once per episode; the dribble reward pays `ball_close` for keeping the
+ball permanently inside the foot-strike zone. A head-down gait that tolerates
+one encounter is eroded by 1.8 M steps of a reward that demands continuous
+engagement, because nothing in the dribble values the tolerance.
+
+→ the honest state of the goal: the chain is **sight needs a deep gaze -> a deep
+gaze needs a head-down gait -> a head-down gait with a ball works in isolation
+-> it does not survive continuous ball engagement**. Every link but the last is
+now built and measured. The last one is not a reward problem and probably not a
+curriculum problem either: it wants the tolerance to be PAID for inside the
+dribble (a term for staying upright while the ball is under the feet), or the
+two objectives are genuinely in conflict for a 25 cm robot with a 70 mm ball
+and a forward-facing camera.
+
+→ NOTHING here beats `runs/dribble-nobackward` on the task: 0.550 targets a
+clip, 39/40 full clips, 2.3 % in frame. Every gaze lineage trades the task for
+the sight. That remains the pick.
+
+→ the gaze reward may now be unnecessary: sight gates the COMMAND structurally,
+and the policy gives back 72% of its spawn gaze within 0.8 s, so losing sight
+loses steering. That is a stronger incentive than any weight on `gaze_ball`,
+and whether the term can now be retired is the next thing to measure — after a
+run, not before.
+
+→ the general lesson, and it is the third time today: **ablate the channels
+before designing the fix.** F priced the reward, G moved the terminal, and both
+measured null because the information was somewhere neither looked. The
+ablation that found it is cheaper than either.
+
+→ **the dribble is solvable with zero ball information**, and that is why no
+gate, weight or terminal has ever made the ghost matter. G proposed the lever
+was a DISPLACEMENT that walking-forward cannot undo. **That was wrong — see H
+above, written the same day.** The information was in the COMMAND, which was
+computed from the ball's true position, so no displacement could have helped:
+the oracle keeps pointing at the ball however far it is knocked. H closes it by
+steering on the belief instead, and the displacement was never built.
+
+→ this is the same information-not-difficulty constraint as D, one level down.
+D established that softening the task does not raise recovery. F establishes
+why the opposite also fails: HARDENING it does not raise recovery either, when
+the hard version is still solvable without the information.
+
+
+
 ### 13. A SECOND ROBOT: the Unitree G1 becomes trainable here — BUILT, MEASURED (2026-09-13)
 
 The G1 arrived in this workspace as a *prop*: `robots/g1.py` attached the Lucky
@@ -15937,3 +17040,603 @@ sentence that now lives in their `record.json` anyway (see the cleanup
 policy in AGENTS.md before deleting anything with a chain tip).
 → **judge on** the poll under 50 ms with the same roster on screen.
 
+
+## MOSS pickup: a learned skill inside a scripted loop (2026-09-24)
+
+`brain/tidy_moss.py` drives, deploys, grips, stows in the rover's own bin and
+folds the arm back. **Scripted pickup: 1/3 cans in 300 s, 3 seeds** (best seed
+stows at t=16 s). **Learned pickup (`robots/moss_env.MossPickEnv`, 3-stage
+spawn ladder, `moss-arm-32-v1`): 4/12 picks at the handover distance in its
+own env, 0/3 in the mission loop.** Six training runs; the gap is not the
+policy and each cause below was a separate measurement.
+
+**Four ways a grip test can lie, in the order they were found.** Every one
+scored something that was not a pickup, and each looked correct in the code:
+
+1. *jaws shut + can nearby* — the policy shut the jaws on step 1 and
+   bulldozed. Closing is half the test and costs nothing.
+2. *servo stall, either finger* — the follower has no servo of its own and
+   lags the coupling permanently, so every closed jaw read as a catch.
+3. *servo stall, soft coupling* — contact impulses ratcheted the pair open
+   0.042 -> 0.054 m over a 300 s run, past the joint's own 0.041 limit. A
+   stiff `solref`/`solimp` on the equality fixed it.
+4. *servo stall, leader only* — a jaw CRUSHING a can flat against the floor
+   stalls exactly like one carrying it. The policy drove the command to
+   0.0 m (58 mm of interference on a 66 mm can) and collected the hold bonus
+   on 199 of 200 steps. **`held` now requires the can off the floor**, and
+   `WorldRobot.held_body` asks whether both pads touch the same foreign body.
+
+The correction cost a published number: the first jaw table ("2-6 mm of
+interference holds, 10 mm EJECTS") was an artefact of the soft coupling and
+does not survive it. Re-measured, every closure that touches holds and only a
+gap fails. Any number quoted from before 2026-09-24 was measured on a model
+that no longer exists.
+
+**Train/deploy disagreement had three distinct causes here**, and a
+slot-by-slot diff of the two PUBLISHED observations at the tick that matters
+was the only thing that separated them:
+
+* *the observation lying* — all seven joint-velocity slots and the yaw rate
+  were identically zero in the brain (env std 0.11-0.28) because `_prev_arm`
+  was updated before the observation differenced against it; and
+  `target_seen` read 0.98 in training against 0.45 in the brain, because a
+  filter written for target SELECTION blanks a can already committed to.
+* *the handover pose* — the brain deployed on a 2 s timer and the wrist was
+  still 0.708 rad from the grasp pose when the policy took over. It now hands
+  over on arrival, matching the env's reset to 0.016 rad on every joint.
+* *the env never sampling the state* — and this is the one that still stands.
+  The approach knocks the can over almost every time, so the brain hands the
+  policy a can LYING DOWN, and the env only ever spawned upright ones. The
+  policy drives it to 12 mm, closes to 29 mm and oscillates without
+  committing: a cylinder across the jaws is a different grasp from one
+  standing in them.
+
+**RESOLVED.** The budget was binding, and two more plumbing bugs were
+hiding behind it.
+
+Spawning lying-down cans half the time made the env score WORSE at the same
+budget (2/12 against 4/12), which is the signal that the state matters and the
+budget is the constraint. Warm-starting from the best upright policy and
+giving stage 3 **2.5M more steps on the mixed spawn** took it to **9/12 picked
+at the handover distance, gripped == picked**. (The obvious alternative --
+replaying states from the mission loop -- has a negative result here already:
+12aw, NO RESULT at 3 seeds an arm against an 8.8-point MDE. Read it before
+spending a night on that route.)
+
+That still gave 0/3 in the loop, and the last two causes were both in the
+world rather than the policy:
+
+* **`Senses.holding` could never fire for a prop.** `World.sense_grip`
+  resolves a held body through `_pickable_of_body`, which was built from the
+  PICKABLES registry only. The gripper's own `held_body` returned the can in
+  12 of 12 env episodes while the loop counted zero grips. Props with mass are
+  in the map now.
+* **The carry dropped the can.** The states after a grip commanded
+  `LIFT_POSE` outright, which is a step input to a position servo: the brain
+  reported `holding=can1` at the grip and `holding=None` 1.9 s later. It
+  matters more with a learned pickup than a scripted one, because the policy
+  finishes in whatever pose it likes and the jump from there is arbitrary.
+  Lift and stow now RAMP from the pose the grip ended in.
+
+With all of it: the learned pickup completes the loop -- drive, deploy, creep,
+grip, stow in its own bin, tuck -- at **2/18 cans over 6 seeds x 300 s**,
+against the scripted pickup's **1/18** on the same seeds. That is parity at
+this seed count, not a win, and the rate is low in absolute terms. What it
+establishes is that the handover works end to end; `runs/moss-pick-v1` ships
+it (`moss-arm-32-v1`, `docs/moss-policy-schema.md` for the hardware mapping).
+
+### The bottleneck was the STOW, not the pickup (2026-09-24, later)
+
+Measured the whole funnel instead of the leg I assumed. Over 12 seeds x 180 s
+in `moss-yard`:
+
+    creep -> lift        51%      the learned pickup
+    lift -> stow         ~100%
+    stow -> release      ~96%
+    release -> IN BIN    35%      <- the loss
+
+Two thirds of cans that were driven to, gripped, carried and released never
+landed in the bin, while every intervention on the pickup leg measured null.
+Three things were wrong and all three are now fixed or recorded:
+
+- **`STOW_INSIDE` was never reachable.** Ramped to it the arm stalls 0.44 rad
+  short with 33 N of forearm and wrist against `bin_x1`, the bin's own front
+  wall, on every release of 51. It delivered anyway because **that jam is
+  load-bearing** — the wall is a mechanical stop and the pose it stops the arm
+  in is exactly what holds the can over the mouth. Searching for a reachable,
+  contact-free release pose found eleven; the best scored **12/12 in
+  `MossStowEnv` and 5 of 16 in the room**, letting go at z = 0.462 against a
+  0.261 rim. The probe and the room disagreed completely and the room is the
+  mission. `STOW_INSIDE` is now the pose the jam SETTLES at, measured off 25
+  room releases: same delivery, 33.6 N -> 7.3 N, because the arm rests on the
+  wall instead of five servos stalling into it.
+- **`_in_bin` had no floor.** It tested x, y and a rim CEILING, so the box was
+  open downwards and a can on the GROUND under the chassis scored as
+  delivered — in `STOW_BONUS` too. Closed, with a test checked against the
+  planted regression.
+- **The carry ran at full squeeze.** `WorldRobot.set_arm` is absolute, and
+  `lift`/`stow` name only the five arm joints, so the gripper kept the creep's
+  last command — 0.0 m — because a loaded pick policy **bypasses the scripted
+  `close` state**, the only place `GRASP_JAW_CTRL_M` is ever commanded. Traced
+  through a carry the jaws crush 36.8 -> 28.8 mm on a 66 mm can and it squirts
+  out: 47 of 79 grip losses happen in `lift` with the can still on the floor.
+
+Net over 12 seeds: **16 cans of 36 against 14**, drop rate 60% -> 88%, and the
+force on the bin wall down 4.6x. The can count is inside binomial noise; the
+drop rate and the wall force are not. The carry is still where the loss is —
+only 31% of lifts still hold the can at release — and that is the next item.
+
+**Method note that cost a measurement.** `TidyMossParams` is a FROZEN
+dataclass, so `TM.TidyMossParams.field = x` silently does nothing (the default
+is baked into `__init__`'s signature; instance assignment would raise, class
+assignment does not). Every params A/B in the earlier session used that idiom,
+so the "retarget gate: 8/18 both ways" result was not a null — it measured
+nothing. Override by patching `__init__` with `object.__setattr__` and assert
+the override took before spending a run.
+
+### The pickup leg, retrained from the lab: budget is the whole story
+
+`moss-pick-v1` was the one leg trained from the CLI (`moss-long-s3`, warm
+started off a lab chain) rather than through `/teach`, so it was relaunched
+through the lab. The first attempt took the 🎓 panel's STICKY step budget,
+which was ~909k against the shipped leg's 3.4M, and it is a clean negative:
+
+    leg                              env rung 2    room, 12 seeds
+    moss-pick-v1        (3.4M)         12/12          16/36
+    teach-moss_pick-3282f0-s3 (909k)    3/12           4/36
+
+That first read as UNDER-BUDGETED — `ep_rew_mean` was still climbing when it
+stopped (-14.7 -> -4.8, still deeply negative) and `ep_len_mean` sat pinned at
+180-190 against a 200-step cap, episodes truncating rather than ending on a
+pick. **So it was rerun at the full 3M, and that lost too:**
+
+    teach-moss_pick-cf9ba0-s3 (3.0M)    5/12           4/36
+
+Its reward went where a healthy run's does — -4.4 up to +17.1 — and `ep_len`
+still never came off the cap. **Budget was not the story.** Two fresh lab
+chains, 909k and 3.0M, both land far short of a leg that scores 12/12.
+
+What separates them is the START, not the steps: `moss-pick-v1` is not a
+fresh chain at all. It warm-started from `teach-moss_pick-aafe78-s3` and
+reached 3.4M TOTAL, so it is the continuation of an already-working policy,
+and neither fresh chain reproduced that from scratch. Read with
+[[eval-seeds-dont-measure-training-runs]]: one fresh chain is one seed, and
+two of them agreeing that scratch is worse is weak evidence about scratch and
+no evidence at all about the shipped leg.
+
+**And continuing it FROM THE LAB works, which settles the cause.** An
+`initFrom` fine-tune has no curriculum stage, so it inherits the lab's own
+environment and with it every env's DEFAULT rung — continuing a leg that is
+12/12 at rung 2 would have retrained it at rung 0. `TeachReq` now carries
+per-job `env` knobs for exactly this, allow-listed to `MICRODUCK_*` because
+the value lands in the environment of a process the server spawns
+(`teach_env_knobs`). With `MICRODUCK_MOSS_PICK_RUNG=2` and
+`initFrom: moss-pick-v1`, 600k steps at lr 1e-4:
+
+    teach-moss_pick-9acd55 (600k cont.)  10/12          12/36    51%
+
+Level with the shipped leg — 16 against 12 of 36 is about 1.3 se on a
+binomial, inside the noise, so neither beats the other. It matters anyway:
+the same recipe, the same lab, the same budget scale, and the only thing
+changed is that it STARTED from a working policy instead of from nothing.
+**The fresh chain was the problem, not the lab.** Its first logged iteration
+shows it: `ep_len_mean` 77.6 against the scratch runs' 180-190, i.e.
+episodes ending on a pick rather than running to truncation.
+
+`moss-pick-v1` keeps its place on the better point estimate, and per
+[[eval-seeds-dont-measure-training-runs]] separating these two properly needs
+a second training seed. That is not worth buying: **the pick leg is not what
+limits the mission.** The room loses its cans in the CARRY, after a
+successful pick, and the lift-ramp A/B (1.2 / 1.8 / 3.0 s -> 14 / 16 / 11
+cans of 36) says the scripted lift is already at its best setting.
+
+**Judge a pick leg on the ROOM, not the env.** Those two have disagreed on
+this leg all along: 12/12 in its own env against ~3 of 9 creep attempts in
+the room. Nothing replaces the shipped leg unless it beats 16/36.
+
+**Harness note.** Reloading `microduck_local.brain.*` to pick up a policy
+override is wrong twice over: `_shipped_policies()` is read inside
+`TidyMoss.__init__` so the env var alone is enough, and `world_server`'s
+registry keeps the class it imported FIRST — so a spy installed on the
+freshly-imported class counts zero while the old class does the work. That is
+what made a comparison print `creep->lift 0/0` beside a non-zero can count.
+
+### The cans never had rolling resistance — the ball bug, one shape over
+
+Found by a human watching the lab: "I never see it roll over in the lab, but
+in the sim I see it rolling over all the time, and that's when it gets stuck
+in the treads."
+
+`world/compose.py` gave `condim: 6` and a real rolling coefficient to props
+whose shape is `"sphere"`, and everything else fell to
+`friction=[0.8, 0.005, 0.0001]` at MuJoCo's default condim 3 — where the
+rolling entry is IGNORED. MOSS's cans are cylinders. A cylinder on its side is
+a roller with a line contact, arguably more of a roller than a sphere, and it
+had nothing to slow it: a knocked can rolled until something stopped it, and
+what usually stopped it was the rover's own tracks. This is precisely the bug
+the BALL had until 2026-09-06, rediscovered one `shape ==` comparison away.
+
+The training env matched the room's broken parameters faithfully — its own
+comment says training against a grippier object than the rooms serve is the
+harness bug this repo hits most often — so both halves were wrong together and
+neither could reveal the other.
+
+Giving cylinders `condim 6` and the measured short-carpet rolling of 0.002, in
+BOTH the room and `GRASP_PROPS["can"]`:
+
+    24 seeds, 72 cans        before      after
+    lifts                      105        122
+    carry held at release      30%        46%
+    CANS IN THE BIN          33/72      60/72
+                             (46%)      (83%)
+
+Confirmed on a second harness. The contact census that motivated it changed
+shape too: `track_1` was the single most common can-contact at 100 touches and
+is no longer in the top four at all.
+
+**This one change is worth more than everything else attempted today** — six
+lab retrains of the pick leg, five scoring criteria, a reward redesign, a
+handover gate. All of those were arguing about how to grab a can that was
+rolling away under physics nobody had checked. The pick leg never needed
+retraining; it scores 23/24 on the corrected can, exactly as it did before.
+
+### The carry never asked whether it still had the can (2026-09-24)
+
+Spotted by a human watching the lab, not by any metric here: "it grabbed the
+can then dropped it but it didn't stop trying to put it in."
+
+The scripted stow ran all three ramps — up, round, down — and opened the jaws
+over the bin without ever testing its own precondition. With only 31% of lifts
+still holding at release, about four stows in ten were nine seconds of theatre
+in a 180 s run, while the can it had dropped sat on the floor behind it.
+
+Checking the grip every tick (0.5 s grace, because the pads flicker during the
+swing) and abandoning the carry:
+
+    24 seeds, 72 cans          lifts      cans
+    no drop detection            94      24/72  (33%)
+    abort on drop               105      33/72  (46%)
+
+The lift count is the mechanism made visible: eleven extra pickup attempts in
+the same wall clock, bought by not posting nothing. The effect GREW with power
+— 0.95 se at 36 cans, 1.6 se at 72 — which is the opposite of what every pick
+retrain did today, and the reason to believe it.
+
+**The lesson is about where the effort went.** Five lab retrains of the pick
+leg, four scoring criteria, and a proof that no pick-only objective can reach
+the mission number — and the thing that actually moved it was a scripted stage
+failing to check a precondition it already had a debounced test for. A
+watched rollout found in one minute what the metrics had been pointing at all
+day without naming: [[verify-policies-deterministically]] says look at it, and
+this is the case where looking beat measuring.
+
+### The chassis knocks the cans, not the gripper (2026-09-24)
+
+Borrowed from a duck session that found ball departure speed tracks the FOOT's
+speed at contact (0.98 ratio, r=+0.69) rather than the body's, so the body
+speed was the wrong knob. Run on MOSS over 8 seeds, 434 can-touch events
+during deploy/creep/close:
+
+    toucher        touches   part v     can leaves
+    track_1          100     0.196       0.245
+    pad_right         83     0.264       0.245
+    hull              58     0.194       0.203
+    pad_left          37     0.213       0.217
+    palm              35     0.217       0.185
+
+**158 of 434 are `track_1` and `hull`** — the chassis driving into cans, not
+the gripper reaching for one. And the base is at 0.193 m/s when it happens,
+which is APPROACH speed; `creep_mps` is 0.08 and the creep is not where this
+occurs. The part-vs-base correlation splits the same way as the duck's but
+weaker (+0.39 against +0.09), because most of what touches a can here is rigid
+to the base rather than swinging.
+
+The approach leg measures **0/12 cans disturbed in its own env**, and that env
+contains ONE can. The room has three. So the leg is not wrong, its env is
+narrow: it was never asked to avoid the cans it is not aiming at, and nothing
+in the mission tells it to.
+
+That makes this a candidate for the carry losses that pick training could
+never reach — a can knocked 0.245 m/s across the floor before the robot ever
+reaches it is a can the pickup leg is then handed in a state its own env never
+spawns. Worth a probe that tags each touch as TARGET or bystander before
+anything is changed.
+
+### Why no retrained pick leg helps: its env scores the wrong event
+
+Four lab runs at the pickup leg — fresh chains at 909k and 3.0M, continuations
+of the shipped leg at 600k and 150k — and none beats `moss-pick-v1` on cans
+delivered. Two things came out of that, and the second is the useful one.
+
+**Continuations hold, fresh chains collapse, and drift is monotonic.**
+48-seed env picks: 94% shipped, 92% at a 150k continuation, 83% at 600k;
+fresh chains reach 3/12 and 5/12. `moss-pick-v1` is itself a continuation
+(warm-started off `teach-moss_pick-aafe78-s3`, 3.4M total), so "train it from
+scratch in the lab" was never the same experiment.
+
+**`picked` and `delivered` are ANTI-CORRELATED across these legs.** The 150k
+continuation ties the shipped leg on picks and loses badly on cans, while
+lifting MORE often — replicated on two independent samples:
+
+    leg                      creep->lift      cans
+    moss-pick-v1  (12 seeds)    59%          16/36
+    d879c3        (12 seeds)    65%          10/36
+    moss-pick-v1  (24 seeds)    53%          27/72
+    d879c3        (24 seeds)    61%          16/72     (~2.1 se apart)
+
+The mechanism is not mysterious: `MossPickEnv` terminates on `picked`, so the
+policy is paid for getting the can off the floor and nothing else. A grip that
+just clears `_grip_is_a_grasp` scores exactly like a square one, and the
+difference shows up two states later when the carry drops it. **Raising the
+pick leg's lift rate lowers the mission's delivery rate.**
+
+So the pick leg is not the lever and further pick training cannot be. Either
+the pick env has to score the grip's QUALITY (the can still held after the
+lift ramp, not merely off the floor), or the carry has to stop losing what it
+is handed — and the carry is where the cans go: only 31% of lifts still hold
+the can when the release fires. Compare [[grip-tests-that-lie]], which is the
+same mistake one level down: a test that scores a crush like a carry.
+
+### MOSS on Laurent's V0.4 collision geometry: the blocker is ours
+
+His `prepare_candidate.py` is integrated and runs as published, behind
+`MICRODUCK_MOSS_COLLISION_V04=1`. His geometry is right — spawned at the
+pinned ride height the belt hulls' lowest vertices sit at z = -0.00 mm,
+touching the floor with zero penetration, at the CAD's 266 mm.
+
+What blocks adoption is our base. `base_x/base_y/base_yaw` pin z, so the
+rover's 42.4 N of weight is carried by the JOINT and **the tracks bear 0.00 N
+at rest**. An unloaded track cannot generate traction, so friction there is
+parasitic drag whose normal force only appears when the chassis is pushed into
+the contact. Commanded 0.2 m/s for 2 s the rover travels 3 mm instead of 400.
+Sweeping the track friction: 0.9 -> 0.003 m, 0.3 -> 0.016, 0.1 -> 0.103,
+0.05 -> 0.230, 0.02 -> 0.355, 0.01 -> 0.385.
+
+So the choice is explicit. Low-friction belts (mu ~ 0.01) make the tracks an
+honest SUPPORT surface under a frankly kinematic drive — the robot then stands
+on the floor, collides with furniture and cannot hover, which is strictly
+better than today, where **every drive figure in this repo is from a robot
+whose tracks touch nothing**. A real friction model needs the weight to reach
+the tracks, which means a free root under gravity instead of a planar joint:
+a different robot, not a different gain. Adopting the candidate today fails 7
+of 116 tests including the drive ones, and would need all three legs
+retrained. Not taken unilaterally.
+
+### Would a front depth camera or a map help MOSS? The ceiling, measured (2026-09-28)
+
+The question was "add depth / SLAM so MOSS remembers where objects are and
+picks faster". Two measurements answer it, both in `moss-yard`, 300 s, the
+shipped `tidy_moss` (pick `478dad`).
+
+**A map has almost nothing to save.** Time by brain state, 4 seeds: tuck 27%,
+creep 23%, deploy 21%, stow 15%, approach 5%, lift+release 7%, **search 1.9%**
+(54 searches, median 0.1 s, max 2.5 s). The yard is small enough that the next
+object is in view almost at once; remembering it could buy 2%.
+
+**The front camera's range is not the error.** `range_est` (from apparent
+width) against truth, ~180k detections: median |err| 2.2 cm under 0.5 m
+(p90 6 cm), 4.3 / 6.2 / 9.5 cm at 0.5-0.8 / 0.8-1.2 / >1.2 m, unbiased.
+Oracle arms, the brain's `_range` patched to hand it ground truth for the
+detection's own object, paired by seed against the shipped brain:
+
+    arm                         seeds   in bin      paired per seed
+    shipped                     0-23    139/264
+    true range                  0-11     72 v 67    +0.42 +- 0.71  (0.6 se)
+    true bearing                0-23    137 v 139   -0.08 +- 0.49  (null)
+    true range AND bearing      0-11     81 v 67    +1.17 +- 0.53
+                                12-23    78 v 72    +0.50 +- 0.53
+                                0-23    159 v 139   +0.83 +- 0.37  (2.2 se)
+
+Neither half alone moves it; the whole fix being true is worth ~+0.8 objects
+per 5 min (+14%), and the first 12 seeds overstated it (+1.17 shrank to +0.50
+on fresh seeds). That is the CEILING for any front position sensor — a real
+depth camera has its own noise and gets part of it — and it is the size of one
+brain knob (`band_mps` bought +0.73). Not worth modelling a sensor for yet: the
+arm cycle (86% of the time) and the ~50% pick conversion are where the minutes
+are. Harness: a scratch patch of `TidyMoss._range` keyed on `Detection.name`
+(truth), not in the repo.
+
+**RE-MEASURED on the depth-camera pick (`3d2aa6-s6`, 54d67a1) — the ceiling
+is now NEGATIVE.** The table above was the old `478dad` pick. Same harness,
+same 24 seeds:
+
+    arm                         in bin      paired per seed
+    shipped                     169/264
+    true range                  158 v 169   -0.46 +- 0.29  (-1.3 / -0.9 per half)
+    true range AND bearing      154 v 169   -0.62 +- 0.29  (-1.7 / -1.3 per half)
+
+A perfect front fix does not help the new brain and probably costs it — plausibly
+because the pick trained on yard handover states seen through this detector,
+and the brain's handover band was tuned on it too; not measured. Time by state
+on the new brain: tuck 28%, stow 24%, deploy 14%, creep 14%, lift 7%, approach
+6%, release 5%, search 2.6%. The minutes are in moving the arm in and out of the
+bin (tuck + stow 52%), not in finding or ranging objects.
+
+**So the stow got faster (2026-09-28).** Per trip it was 9.0 s every time —
+the scripted route's three ramp clocks (2.0 / 4.0 / 3.0 s), not the arm — and
+the learned fold home after it 7.7 s. Four arms, 24 seeds, paired:
+
+    stow                        stow   in bin   lost in stow   paired per seed
+    shipped 2.0/4.0/3.0         9.0 s  169/264  25%
+    x0.6    1.2/2.4/1.8         5.4 s  185/264  24%            +0.67 +- 0.29
+    x0.4    0.8/1.6/1.2         3.6 s  179/264  31%            +0.42 +- 0.31 (0.00 second half)
+    learned moss-stow-v1        0.4 s    9/264  100%           -6.67 — opens the jaws at once
+
+x0.6 confirmed on 24 fresh seeds (24-47: 174 v 165, +0.38 +- 0.30); over 48,
+**359 v 334, +0.52 +- 0.21 (2.5 se)**, drops unchanged — SHIPPED as the
+`TidyMossParams` default. The learned stow still fails on the depth pick
+exactly as it did on the can pick (released within 0.4 s, every stow), so the
+old 7 mm-grasp explanation is not the whole cause. Next lever: the fold home
+(7.7 s, trained deliberately slow at 0.75 rad/s) — a retrain, not a knob.
+
+**Squeezing harder does not keep more objects (2026-09-28).** The finger servo
+is kp 700 N/m with a +-8 N `forcerange`, so the carry's 10 mm interference is
+already ~7 N (median 6.9 N measured in the stow) and 11.4 mm is the cap. 24
+seeds with the 5.4 s stow: 10 mm 181/264, losses 21%; 11 mm 176 (-0.21 +-
+0.27), 26%; 12 mm (7.7 N) 175 (-0.25 +- 0.31), 26%. Where the 52 losses at
+10 mm are: **19 began the stow with nothing held** (`holding` None on its first
+tick — lost in the lift or the handover, not the carry); the rest slide out on
+the swing up (leg 0) and the turn (leg 1), boxes and 12 cm cans most. That is
+grip PLACEMENT and wrist rotation, not force. Caveat: every prop here is rigid.
+Real trash is soft, and under a position servo a soft object gives way, so the
+same interference is LESS force — on hardware the grip wants a current (force)
+threshold, not a position.
+
+**Where objects are really lost, and the depth camera's fix (2026-09-28).**
+Tracing all 303 carries of 24 seeds by the object's own position (lost = its
+centre > 5 cm from the tcp): **82 fall in the LIFT**, ~0.4 s in, just off the
+floor; 33 in the stow (boxes on the pan swing, ~1.6 rad/s). 12 cm cans are
+the bulk — 52 of 119 fall in the lift. At lift start a lost object sat 4.2 cm
+from the tcp (median), a kept one 1.6 cm: the jaws had closed on an edge. The
+wrist depth camera's grip fix reads that to a few mm (median grip z 0.026 v
+true 0.026 for lift losses), and |grip| > 3 cm flags 66/85 lift losses, 24/52
+stow losses and 28/163 good carries. The shipped pick TRAINED under exactly
+this test (`deep_grip_m` 0.035 is its success criterion) but the brain lifted
+on any grip. `grip_depth_max_m` 0.030 / `grip_depth_wait_s` 2.0: hold the
+handover while it reads shallow, keep the pick acting, lift anyway at 2 s.
+SHIPPED on 48 seeds: **385 v 354, +0.65 +- 0.17** (0-23 +0.71 +- 0.21; fresh
+24-47 +0.58 +- 0.27). 3.5 cm +0.38; no cap +0.67. `tests/test_moss_grip_gate.py`,
+each test shown to fail against a planted regression. Open: the pick still
+closes shallow a third of the time — the env pays for depth only at success,
+so a shaped depth term (or `deep_grip_m` 0.030) is the retrain to try.
+
+**Size-aware, then tuned (2026-09-28).** The MOSS pick session found butts
+held fell 21 -> 4 under the gate: small objects READ shallow in a good grip
+(|grip| median 3.5 cm, 58% over 3 cm) and a 0.6 g butt cannot slip out of a
+7 N grip under its own weight, so gating them only made them wait. Gate only
+objects detected >= 8 cm (`grip_depth_min_size_m`): 48 seeds 392 v 385
+(gating all) v 354 (off). Then, large objects only, v 3 cm / 2 s:
+2.5 cm -0.04 +- 0.13; **3.5 cm -0.54 +- 0.13 (4.2 se, both halves)**; wait 1 s
+-0.06 +- 0.08; wait 3 s IDENTICAL on every seed — the 2 s timeout never fires
+on a large object; blocks end by re-seat or grip loss first. 3 cm / 2 s kept.
+The gate is tuned out. Per object over 48 seeds the gaps left are the card
+(0/48 ever binned) and the butt (4/48) — carry problems, not grip depth.
+
+## 12ay — the dribble's wall is the BALL, not the reward (2026-09-25)
+
+**Answered in part; one bad rung to redo.** After eight rounds of reward work
+the dribble still scored 0.667 targets/clip at best. The cause was not the
+pay: on `runs/dribble-nobackward` (BAM, deterministic, 12-16 clips) the duck
+takes **1.33 touches per target reached**, and **1.12 touches in a 20 s clip
+against 1.25 in an 8 s one** — about one contact per episode however long the
+clip. A multi-touch sequence was never in any rollout, so no weight could
+teach one. Targets sit 0.30-0.55 m out with a 0.15 m reach and one touch on
+the free-rolling ball travels ~0.6 m, so one kick IS one target.
+
+Same policy, no retraining, only the ball's rolling friction changed:
+
+| rolling | touches/clip | contact | travel/touch |
+|---|---|---|---|
+| 0.002 (the composed scene's ball) | 1.33 | 1.0% | 0.069 m |
+| 0.01 | 3.75 | 2.2% | 0.079 m |
+| 0.05 | 12.00 | 8.5% | 0.044 m |
+
+Rendered at 0.05 and confirmed by eye: the ball sits between the feet for
+seconds, and the duck turns round and walks BACK to a ball it left behind —
+re-acquisition that never once happened on the free ball.
+
+Landed: `MICRODUCK_DRIBBLE_BALL_ROLLING` applied on reset, a three-rung ladder
+(0.05 -> 0.01 -> scene) across the recipe's three stages, and 8 tests each
+A/B'd against a planted regression.
+
+**The result, and why it does not count yet.** `teach-dribble-f14433` ran the
+full 6M chain and missed the pre-registered bar (touches per target >= 4 on the
+shipped ball): **1.67 touches per target, 1.12 touches/clip** at stage 3,
+against 1.33/1.25 for the donor. But the run is contaminated — the reset
+hook's default shipped as upstream `ball.xml`'s 0.0001 while
+`contract.scene_walk_ball_xml` COMPOSES **0.002**, so stage 3 trained on a
+ball that rolls freer than the lab's own (net travel 1.44 m a clip vs 0.83 m)
+and that nothing else in this repo uses. Default now corrected to the scene's
+value and guarded by `test_the default_matches_the_composed_scene`.
+
+**Next, and the number that settles it:** re-run the chain on the corrected
+bottom rung and re-measure touches per target on the scene's ball; the bar is
+>= 4 against the donor's 1.33. If multi-touch appears at 0.05 and collapses on
+the way down, the next lever is the target geometry (targets far enough that a
+single touch cannot win one), not another weight.
+
+### MOSS's arm: a rest pose that clears its own body, and what the WRIST camera is worth (2026-09-28)
+
+Asked on `/sim`: the arm "clips through the box going into the rest position"
+and "gets stuck as it sweeps out to grab something" — and "the wrist camera
+just points down at the track; point it outwards so it can help scan". Both
+were real. MEASURED over eight 7-minute `moss-yard` runs, the arm's VISIBLE
+meshes (not the 26 mm collision proxies — they are thinner than a 70 mm
+forearm) against the bin and hull: the old rest pose `moss.tuck_pose()` has the
+gripper's mesh ON the bin's front wall, so every move out of it began in
+contact; the sweep out to the grasp pose clipped 50% of its time and sat
+stalled 92 s; and the learned approach, which moves the arm while driving,
+pressed the rover at up to 292 N.
+
+**The motion work is a clear win.** A rest pose searched under hard
+constraints (>= 15 mm clear of the visible arm, nothing in the front camera's
+view, the whole arm inside the circle the chassis sweeps turning in place),
+every move to and from it by a route checked on the visible meshes, timed
+minimum-jerk, followed on a leash that advances the clock only while EVERY
+joint is on the verified path. 48 paired seeds of 15 min:
+
+| | before | after |
+|---|---|---|
+| arm on the rover, per run | 146 s (median peak 490 N) | 6 s (64 N) |
+| arm stalled, per run | 57 s | 7 s |
+| in the bin at 5 min (48 runs) | 449 | 467 |
+| median time to bin 8 / 10 objects | 206 s / 300 s | 161 s / 230 s |
+
++0.38 ± 0.15 objects at 5 min, holding in both halves of the seeds. By 15 min
+the two tie (485 v 484) — the yard is cleared either way, so the gain is
+speed, not reach.
+
+**The wrist camera scans, and it is a null on the mission — both, honestly.**
+Paired against the same motion without it, 48 seeds: **-0.04 ± 0.10 objects at
+5 min, -0.04 ± 0.07 at 15 min**. It is kept ON because the information is real
+and free, not because it scored:
+
+* it contributes 1-5 memory entries per run (the front camera: 32-39), is
+  first to 1-5 of them by **2-94 s**, and 0-3 per run are objects the front
+  camera never sees at all;
+* 92% of its detections survive the brain's filters — the filters are not the
+  bottleneck;
+* sampling it costs nothing measurable (yard tick 0.81 ms with, 0.80-0.86 ms
+  without, interleaved).
+
+It cannot do more here for two measured reasons. The arm only rests in
+search/approach for **~10% of a run** (`wcam` rides 173 of 3000 ticks), and its
+reportable strip is **0.168 m²** — in the cone, inside the detector's 0.60 m
+range, past the brain's 0.25 m self-reject — against the front camera's
+4.65 m². All 0.168 m² of it is floor the front camera cannot see, which is the
+point; but the yard saturates at 483-485 of 490 objects either way.
+
+**Two instrument bugs found on the way, both worth more than the feature.**
+
+1. *The first 48-seed battery came back IDENTICAL, seed for seed.* The world
+   never called `arm_detector.sample`, so `senses.arm_det` was None on every
+   tick, while the `/sim` overlay drew the camera's cone from its SPEC and made
+   it look alive. An exactly-zero null is a disconnected wire: a real
+   intervention moves a chaotic sim off its seed. `world/arena` samples it now
+   and a test asks the production world for a frame.
+2. *`mj_geomDistance` answers 0.0 — touching — for mesh/box pairs that are
+   plainly apart, once the cutoff grows.* At the rest pose the upper arm reads
+   0.0 against `bin_x1` at any cutoff >= 0.10 while its nearest vertex is
+   **85 mm** from that box. Over 4488 (geom pair, pose) queries: no false zeros
+   at 0.02, 0.11% at 0.03, 0.56% at 0.10. It costs availability, not safety —
+   a false 0.0 fails `segment`, so a clear route is refused and the old ramp
+   runs; at the shipped 0.03 it refused three of the pose pairs the brain
+   routes between. `moss_motion.CAP_MAX = 0.02` clamps it (every margin here is
+   <= 0.015). Re-measured on 48 paired seeds: 5 min -0.02 ± 0.08, 15 min
+   -0.08 ± 0.04 — below this comparison's MDE (~0.11), so flat, with arm-on-
+   rover time 6.9 s against 8.4 s.
+
+**MEASURED OFF — scanning from any arm pose.** Replacing the rest gate with a
+joint-speed gate trebles the points accepted (161-286 v 21-95) and LOSES picks
+(10/10/8 v 9/12/10). 5-8 of the extra entries per run are phantoms created
+during `lift`, where the camera stares at the object IN THE JAWS and the
+kinematics place it on the floor 0.3 m away. The rest gate is what keeps the
+camera pointed at floor.
+
+**Not done, and why:** re-aiming the rest pose for reportable area. Scored
+honestly (floor inside 0.60 m, not out to 1.5 m as the first search did) the
+optimum is 0.279 m² against the shipped 0.168 — but every such pose aims 65 deg
+down, which is the "just pointed at the track" this pose was asked to stop
+doing, and 66% more strip cannot show up against a ±0.10 MDE on a saturated
+yard. If the wrist channel is ever worth widening, the lever is the **window**
+(10% of a run) or a room that does not saturate, not the aim.
