@@ -26,11 +26,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import { createPortal } from "react-dom";
 import * as THREE from "three";
 
 import { loadJSON, saveJSON } from "@/lib/persist";
 import { getSelectedDuck } from "@/lib/select";
 import { PanelToggle } from "./Panel";
+import { HANDLE, useDrag } from "./useDrag";
 import { OVERLAY_LAYER, type SimClient } from "@/lib/sim";
 
 /** [x, y, size, hits, confirmed, age_s, writtenOff] */
@@ -123,6 +125,10 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
   useEffect(() => saveJSON("simMossMapOpen", open), [open]);
   const openRef = useRef(open);
   openRef.current = open;
+  // Draggable by its title bar like the inspector (double-click re-docks);
+  // the position persists. `useDrag` works in viewport coordinates and this
+  // panel lives in the canvas's overlay, so subtract where that overlay is.
+  const drag = useDrag("simMossMapPos", panel, 60, 12);
   const lines = useRef<THREE.LineSegments>(null);
   useEffect(() => {
     lines.current?.layers.set(OVERLAY_LAYER);
@@ -333,10 +339,20 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
         <lineBasicMaterial vertexColors transparent opacity={0.9} />
       </lineSegments>
       <Html fullscreen style={{ pointerEvents: "none" }}>
-        <div ref={panel} style={{ display: "none", position: "absolute", zIndex: 50, right: 12, bottom: 96, width: W + 16, pointerEvents: "auto",
+        {/* Portalled to <body>: inside the canvas's overlay it stacks UNDER the
+            page's panels (the inspector covered its title bar), and its drag
+            position would be off by the overlay's offset. */}
+        {createPortal(
+        <div ref={panel} style={{ display: "none", position: "fixed", zIndex: 50, width: W + 16, pointerEvents: "auto",
+          ...(drag.pos ? { left: drag.pos.x, top: drag.pos.y } : { right: 12, bottom: 96 }),
           font: "10px/1.45 ui-monospace, Menlo, monospace", color: "#c9d1d9", padding: 8,
           background: "rgba(16,18,22,0.88)", border: "1px solid #2d333b", borderRadius: 4 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", color: "#e6edf3" }}>
+          <div
+            onPointerDown={drag.onPointerDown}
+            onDoubleClick={drag.reset}
+            title="drag to move · double-click to re-dock"
+            style={{ ...HANDLE, display: "flex", alignItems: "flex-start", color: "#e6edf3" }}
+          >
             <span style={{ flex: 1 }}>MOSS&apos;S MAP · what it believes</span>
             <PanelToggle open={open} onToggle={() => setOpen((v) => !v)} what="MOSS's map" />
           </div>
@@ -358,7 +374,9 @@ export function MossMapOverlay({ client, enabled }: { client: SimClient; enabled
             Shaded: floor it has looked at (brighter = more recent). Dashed teal: its rim patrol.
           </div>
           </div>
-        </div>
+        </div>,
+          document.body,
+        )}
       </Html>
     </>
   );
