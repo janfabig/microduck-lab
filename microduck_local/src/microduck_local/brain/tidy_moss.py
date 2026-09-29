@@ -210,12 +210,37 @@ class TidyMossParams:
     #: 1.0 s) 369 v 390; faster still (0.15 / 0.5 / 0.4 s) no better.
     pinch_small: bool = True
     pinch_size_m: float = 0.035
+    #: ...OR lying FLATTER than this, however wide it is (0 = off). The width
+    #: gate alone is the wrong dimension for a card: `moss-yard`'s `card0` is
+    #: 60 x 40 x 4 mm — FLATTER than the butt the pinch was built for (8 mm)
+    #: and lower (centre 2 mm v 4 mm) — but reads 0.030-0.060 wide, so it fell
+    #: to the learned pick, which grips at `GRASP_HEIGHT_M` = 50 mm with a
+    #: 62 mm gap: a can's numbers, 38 mm above it. MEASURED on one seed: 19 of
+    #: 21 carries never lifted it past 13 mm; the jaws brushed it along the
+    #: floor once a second. Height is recoverable from the head camera, which
+    #: is level with the base: `CAMERA_POS[2] + range * sin(elevation)`,
+    #: median error <= 5 mm over 11 props, separating card/butt/cap at
+    #: 0.004-0.007 from block/paper/ball/squat at 0.020+ and the cans at 0.058.
+    pinch_flat_m: float = 0.015
+    #: A flat object WIDER than this wants the jaws across its LONG side.
+    #: MEASURED by IK'ing onto `card0` at 30 poses: with its short side across
+    #: the jaws it never lifted (0/15); with the long side across them and the
+    #: pads low it lifted 9/9 when centred. The butt is the other way round —
+    #: `pinch_grip` stays "along" for it — which is why this is per object and
+    #: not a new global.
+    pinch_wide_m: float = 0.035
     pinch_grip: str = "along"
     pinch_look_s: float = 0.25
     pinch_hover_m: float = 0.05
     pinch_move_s: float = 0.7
     pinch_close_s: float = 0.6
     pinch_floor_m: float = 0.0015
+    #: ...and for a FLAT object, which the usual clearance cannot reach: it
+    #: puts the pads 1.5 mm off the floor, leaving an 8 mm butt 6.5 mm of pad
+    #: overlap (the cigarette works) and a 4 mm card 2.5 mm. Negative, so the
+    #: pads press down: the grasp window measured on `card0` is a pad midpoint
+    #: near 12 mm, and 18 mm and above never held it.
+    pinch_flat_floor_m: float = -0.014
     #: ...from THIS close. The handover leaves small objects 0.43-0.52 m off
     #: (measured), where the wrist camera cannot see them and the jaws cannot
     #: point down at them (reach jaws-down ends ~0.38 m); the pinch first
@@ -943,6 +968,15 @@ class TidyMoss:
         self._route_tried = False
         self._carry_jaw: float | None = None
         self._fix_size: float | None = None
+        #: The head camera's height readings for the CURRENT target, and where
+        #: that target is — see `_see`. `_fix_height` is the latest, the gate
+        #: uses the median.
+        self._fix_height: float | None = None
+        self._fix_heights: list[float] = []
+        self._fix_heights_at: tuple[float, float] | None = None
+        #: Was this target gated as FLAT? The pinch descends deeper for it and
+        #: grips across its long side.
+        self._target_flat = False
         self._kin = None
         #: `moss_motion`: the clearance model (built on first use) and the
         #: current state's planned move (None: not planned yet; False: no
@@ -989,7 +1023,7 @@ class TidyMoss:
         offset is added here rather than absorbed into the standoff.
         """
         out = []
-        for r, x, y, size in self._toys_in_view(senses.det):
+        for r, x, y, size, z in self._toys_in_view(senses.det):
             if self._is_written_off(x, y):
                 continue                       # tried, could not collect
             if self.p.object_memory and self._mem is not None:
@@ -998,14 +1032,29 @@ class TidyMoss:
                      self._mem.near(*w, self._mem.gate_m + self._mem.gate_per_m * r))
                 if e is None or not self._mem.confirmed(e):
                     continue                   # seen once: maybe a phantom
-            out.append((r, x, y, size))
+            out.append((r, x, y, size, z))
         if not out:
             return None
-        _r, x, y, size = min(out)
+        _r, x, y, size, z = min(out)
         self._fix_size = float(size)
+        # PER TARGET. A single list across every object mixed a 22 mm cube's
+        # readings into a 4 mm card's and pinched the cube 8 times, missing
+        # every one: one tick's height is noisy (card0 reads -0.016..0.020
+        # over a run) while its MEDIAN is 0.004.
+        w_now = self._world((x, y))
+        if w_now is not None:
+            w_was = self._fix_heights_at
+            if w_was is None or math.hypot(w_now[0] - w_was[0],
+                                           w_now[1] - w_was[1]) > 0.08:
+                self._fix_heights = []
+            self._fix_heights_at = w_now
+        self._fix_height = float(z)
+        self._fix_heights.append(float(z))
+        if len(self._fix_heights) > 25:
+            del self._fix_heights[0]
         return (x, y)
 
-    def _toys_in_view(self, frame) -> list[tuple[float, float, float, float]]:
+    def _toys_in_view(self, frame) -> list[tuple[float, float, float, float, float]]:
         """(range, x, y, size) of each toy detection, BASE frame, that could
         be a target: in front, not under the robot, not in its own bin."""
         if frame is None or not frame.detections:
@@ -1033,7 +1082,11 @@ class TidyMoss:
             # its physical SIZE, from the same detection: the detector ranges
             # each object by its own size, so range x angular width is it
             size = 2.0 * r * math.tan(max(float(det.width), 1e-4) / 2.0)
-            out.append((r, x, y, size))
+            # ...and how HIGH it sits. The head camera is level with the base
+            # (measured: pitch -0.0 deg), so this is camera height plus
+            # range x sin(elevation). `pinch_flat_m` gates on it.
+            z = moss.CAMERA_POS[2] + r * math.sin(float(det.elevation))
+            out.append((r, x, y, size, z))
         return out
 
     # -- the room model (brain/moss_search.py) ------------------------------
@@ -1067,7 +1120,7 @@ class TidyMoss:
             return
         self._det_t = frame.t
         pts = []
-        for rng, x, y, size in self._toys_in_view(frame):
+        for rng, x, y, size, _z in self._toys_in_view(frame):
             w = self._world((x, y))
             if w is not None:
                 pts.append((w[0], w[1], size, rng))
@@ -1093,6 +1146,17 @@ class TidyMoss:
             cam = self._world((moss.CAMERA_POS[0], 0.0))
             if cam is not None:
                 self._cov.mark(cam, od[2], half, 0.15, p.cover_m, t)
+
+    def _flat_target(self) -> bool:
+        """Is the thing being deployed on LYING FLAT — flatter than
+        `pinch_flat_m`? The MEDIAN of this target's recent height readings,
+        never one tick: a single reading is noisy (card0 spans -0.016..0.020
+        across a run while its median is 0.004), and gating on one pinched
+        `paper0`, a 22 mm cube, 8 times in a run, missing every one."""
+        if self.p.pinch_flat_m <= 0.0:
+            return False
+        hs = sorted(self._fix_heights[-15:])
+        return len(hs) >= 5 and hs[len(hs) // 2] < self.p.pinch_flat_m
 
     def _at_rest(self, senses: Senses) -> bool:
         arm = senses.arm or {}
@@ -1438,15 +1502,24 @@ class TidyMoss:
             if pc["yaws"]:
                 c = float(np.mean(np.cos(2 * np.array(pc["yaws"]))))
                 s = float(np.mean(np.sin(2 * np.array(pc["yaws"]))))
+                grip = p.pinch_grip
+                if self._target_flat and (self._fix_size or 0.0) > p.pinch_wide_m:
+                    grip = "across"          # a card: jaws on its LONG side
                 jaw_yaw = 0.5 * math.atan2(s, c) + (
-                    0.0 if p.pinch_grip == "along" else math.pi / 2)
+                    0.0 if grip == "along" else math.pi / 2)
                 roll = K.roll_for(pc["hover_pose"], jaw_yaw)
             # the arm sags under its own weight: aim by where the pads REALLY
             # are over where they were sent
             sag = pc["hover"] - K.padmid(here, jaw_now)
             over = np.array([obj[0], obj[1], pc["hover"][2]]) + sag
             over_pose, _ = K.solve(over, roll, pc["hover_pose"])
-            grasp = np.array([obj[0], obj[1], K.pad_half + p.pinch_floor_m]) + sag
+            # Only a WIDE flat thing (a card) needs the pads pressed below
+            # the clearance: the 8 mm butt and the 12 mm cap already get
+            # enough pad overlap, and giving them the deep descend cost cap0
+            # (left on the floor in 7 of 11 runs against ~0 before).
+            deep = self._target_flat and (self._fix_size or 0.0) > p.pinch_wide_m
+            floor_m = p.pinch_flat_floor_m if deep else p.pinch_floor_m
+            grasp = np.array([obj[0], obj[1], K.pad_half + floor_m]) + sag
             pose, res = K.solve(grasp, roll, over_pose)
             if res > 0.005:
                 self._to("creep", t)
@@ -2143,6 +2216,9 @@ class TidyMoss:
                 if band == 0.0 or since >= p.deploy_timeout_s + p.band_timeout_s:
                     small = (self._fix_size is not None
                              and self._fix_size < p.pinch_size_m)
+                    flat = self._flat_target()
+                    self._target_flat = flat
+                    small = small or flat
                     self._to("pinch" if (p.pinch_small and small) else "creep", t)
                 else:
                     # Close the loop on the ONE variable the next leg's

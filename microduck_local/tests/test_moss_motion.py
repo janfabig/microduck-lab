@@ -226,3 +226,77 @@ def test_in_the_yard_the_brain_is_handed_wrist_camera_frames():
         w.step()
     s = st.senses_for(r)
     assert s.arm_det is not None and s.arm_det.t > 0.0
+
+
+# --- the FLAT-object pinch (`pinch_flat_m`, `pinch_wide_m`) -----------------
+# `moss-yard`'s card0 (60 x 40 x 4 mm) was left on the floor in 47 of 48 runs.
+# It is not a missing skill: the card is inside the pick env's own training
+# range, and IK'd onto it the gripper lifts it +215 mm. It failed because the
+# pinch was gated on WIDTH — the card reads 0.030-0.060 wide, so it fell to the
+# learned pick, which grips at a can's 50 mm with a 62 mm gap, 38 mm above it.
+
+def _det(cls, bearing, elevation, width, rng):
+    from microduck_local.sensors.detector import Detection
+    return Detection(cls, "x", bearing, elevation, width, rng, 1.0)
+
+
+def _feed(b, z, n, rng=0.30, width=0.12):
+    """n head-camera frames of one toy whose implied height is `z`."""
+    from microduck_local.brain.runtime import Senses
+    from microduck_local.sensors.detector import DetectionFrame
+    elev = math.asin(max(-1.0, min(1.0, (z - moss.CAMERA_POS[2]) / rng)))
+    for i in range(n):
+        b.step(Senses(t=0.02 * (i + 1), odom=(0.0, 0.0, 0.0), speed=0.0,
+                      det=DetectionFrame(t=0.02 * i,
+                                         detections=[_det("toy", 0.0, elev, width, rng)])))
+
+
+def test_the_head_camera_gives_the_brain_each_toys_HEIGHT():
+    """The camera is level with the base (measured: pitch -0.0 deg), so
+    `CAMERA_POS[2] + range * sin(elevation)` is the object's height. Over 11
+    yard props the median error is <= 5 mm, and it separates card/butt/cap at
+    0.004-0.007 from block/paper/ball/squat at 0.020+ and the cans at 0.058."""
+    from microduck_local.brain.tidy_moss import TidyMoss
+    b = TidyMoss()
+    b._to("search", 0.0)
+    _feed(b, 0.004, 6)
+    assert b._fix_height is not None
+    assert abs(b._fix_height - 0.004) < 0.001
+
+
+def test_the_flat_gate_reads_a_MEDIAN_and_keeps_each_targets_own_readings():
+    """One tick's height is noisy — card0 reads -0.016..0.020 across a run
+    while its median is 0.004. Gating on a single reading pinched `paper0`, a
+    22 mm cube, 8 times in one run and missed every one; and ONE list shared
+    across objects mixed the cube's readings into the card's."""
+    from microduck_local.brain.tidy_moss import TidyMoss
+    b = TidyMoss()
+    b._to("search", 0.0)
+    _feed(b, 0.024, 12)                       # a cube, with...
+    _feed(b, 0.001, 1)                        # ...one stray low reading
+    assert not b._flat_target(), "one stray tick flipped the gate"
+    # a different target 0.5 m away starts its own list
+    b2 = TidyMoss()
+    b2._to("search", 0.0)
+    _feed(b2, 0.024, 12)
+    n_before = len(b2._fix_heights)
+    b2._fix_heights_at = (9.0, 9.0)           # as if the target jumped
+    _feed(b2, 0.004, 6)
+    assert len(b2._fix_heights) < n_before, "the new target inherited the old readings"
+    assert b2._flat_target()
+
+
+def test_only_a_WIDE_flat_thing_gets_the_deep_descend_and_the_across_grip():
+    """The card needs the pads pressed below the floor clearance and the jaws
+    on its LONG side. The 8 mm butt and 12 mm cap are flat too and need
+    NEITHER — giving them the deep descend left `cap0` on the floor in 7 of 11
+    runs. So both ride on flat AND wider than `pinch_wide_m`."""
+    from microduck_local.brain.tidy_moss import TidyMossParams
+    p = TidyMossParams()
+    assert p.pinch_flat_floor_m < p.pinch_floor_m      # deeper, and negative
+    assert p.pinch_flat_m > 0.0 and p.pinch_wide_m > 0.0
+    def wide(size):
+        return size > p.pinch_wide_m
+
+    assert wide(0.060) and wide(0.044)                 # card readings
+    assert not wide(0.030) and not wide(0.015)         # butt, cap

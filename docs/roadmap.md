@@ -17730,7 +17730,58 @@ object: `can0`, approached 9 times, never binned.)
   2.4 s turn — `pinch_turn_s` (3.2 s), which fixed exactly this for the butt,
   only applies when `_pinched` is set.
 
-**Three fixes tried, none sufficient on its own** (moss-yard, 5-6 paired seeds):
+**RESOLVED 2026-09-29: card0 0/20 -> 5/20, and the mission is unchanged.**
+Three knobs were wrong AT ONCE, which is why each alone measured null. Fixing
+all three (20 paired seeds, 5 min): `card0` in the bin **5/20 against 0/20**,
+total binned 80 v 81 (-0.05 +- 0.48), so the card is free.
+
+1. **Gate the pinch on HEIGHT, not width** (`pinch_flat_m` = 0.015). Height
+   comes from the head camera, which is level with the base:
+   `CAMERA_POS[2] + range * sin(elevation)`, median error <= 5 mm over 11
+   props, separating card/butt/cap at 0.004-0.007 from block/paper/ball/squat
+   at 0.020+ and the cans at 0.058. It must be the MEDIAN of that target's
+   readings — one tick is noisy (card0 spans -0.016..0.020, median 0.004), and
+   gating on a single reading pinched `paper0`, a 22 mm cube, 8 times in a run
+   and missed every one. The readings are kept PER TARGET; one shared list
+   mixed the cube's into the card's.
+2. **Jaws across its LONG side** (`pinch_wide_m` = 0.035), for a flat object
+   wider than that. The butt is the other way round and keeps "along" — a
+   global flip to "across" measured 13 v 22 binned and cost the cigarette.
+3. **Press the pads below the floor clearance** (`pinch_flat_floor_m` =
+   -0.014), for a WIDE flat object only. Scoping matters: giving the 8 mm butt
+   and 12 mm cap the same descend left `cap0` on the floor in 7 of 11 runs.
+
+The window this targets was measured by IK'ing onto the card at 30+ poses: pad
+midpoint near 12 mm with the long side across the jaws and good centring lifts
+it **9/9**; at the 0.0178 m the room used to reach it is 0-2/9, and with the
+short side across the jaws 0/15. Closure barely matters (8-36 mm inner gaps
+all hold; 40 mm and wider never touch it).
+
+**5/20 IS THE CEILING of a jaws-down pinch, and the reason is the pads.**
+The pad is 36 mm tall, so its midpoint cannot go below 18 mm without pushing
+through the floor: measured in the room, every close bottoms out at
+**0.0178-0.0184 m** whatever `pinch_flat_floor_m` asks for. The bench's 9/9
+was at 0.012 — the pads pressed INTO the floor, which a commanded arm in a
+settle loop can do and the room cannot. At the height the room can actually
+reach the bench gives 2-5/9, which is the 25% the room now gets: the loop is
+performing at its primitive's limit, not below it.
+
+What is NOT the problem, each checked: the wrist camera's aim is good (mean
+error 5-12 mm at settle, no better with a median, and the offset at the close
+is now 5-12 mm against 18 mm before); the grip check is right to report no
+hold (`_gripped_raw` needs BOTH pads on the same body — forcing it would carry
+air, the documented "lift, stow and release nothing 24 times in 300 s"); and
+`_pinched` IS set on a real pick (a probe that read the flag at grab time,
+before the rise sets it, made it look otherwise).
+
+**The next lever is a TILTED approach, not more tuning.** `MossKinematics.solve`
+hard-constrains the tool straight down, so the pads meet a flat card face-on
+and bottom out on the floor. An angled wrist would let a pad edge reach under
+a 4 mm card instead of resting beside it. That is a new IK orientation target
+and a real piece of work; everything short of it is at its limit.
+
+**The three fixes, tried one at a time, each measured null** — recorded so the
+next person does not repeat them singly: (moss-yard, 5-6 paired seeds):
 gating the pinch on HEIGHT instead of width (height is recoverable as
 `0.075 + range x sin(elevation)`, median error <= 5 mm, and separates
 card/butt/cap at 0.004-0.007 from everything else at 0.020+) doubled pinch
