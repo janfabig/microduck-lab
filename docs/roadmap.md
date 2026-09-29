@@ -17811,12 +17811,23 @@ does not transfer because its "centred" cases were a different grasp mode —
 pads pressed into the floor by a directly-commanded arm with a long settle,
 which the room cannot reproduce.
 
-**So the next lever is NOT tuning this primitive.** Each of the four knobs
-above is now known-null or known-worse. What is left is a different grasp:
-`MossKinematics.solve` pins the tool straight down, so the pads always meet a
-flat card face-on. A tilted wrist — a pad edge reaching under the card rather
-than resting beside it — is a new IK orientation target and the only untried
-mechanism.
+**So the next lever is NOT tuning this primitive** — each of the four knobs
+above is now known-null or known-worse.
+
+**Nor is it a tilted wrist, which is what I proposed next: the arm CANNOT do
+it.** `MossKinematics.solve` pins the tool straight down, and that is not a
+simplification to relax — `wrist_roll` spins ABOUT the tool axis, so it cannot
+change that axis's DIRECTION. Position (3) plus an axis direction (2) is five
+constraints against the four joints that move the axis. Measured: the IK's
+residual is 0.00001 straight down and 0.0036 at 5 deg, 0.0063 at 15, 0.0070 at
+30 — over-constrained, not a solver that failed. A pad edge cannot be brought
+under a 4 mm card by tilting; the pads always meet it face-on.
+
+**What is actually left**, none of it a knob on this pinch: give the card
+something to stop against (a wall, the bin's own lip) so the jaws are not the
+only thing holding it; a thinner pad, or a lip on the pad, in the MJCF — the
+36 mm pad resting on the floor is why the press is needed at all; or accept
+10/24, which costs ~4 wasted approaches a run and nothing else.
 
 **The three fixes, tried one at a time, each measured null** — recorded so the
 next person does not repeat them singly: (moss-yard, 5-6 paired seeds):
