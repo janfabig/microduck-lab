@@ -347,16 +347,20 @@ def test_no_tidy_prop_is_thinner_than_the_jaws_can_close_on():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     shut_gap = 0.008              # pad inner faces, fully closed
-    for name in ("moss-yard",):
-        raw = json.loads((root / "scenarios" / f"{name}.json").read_text())
-        for prop in raw.get("props", []):
+    seen = 0
+    for path in sorted((root / "scenarios").glob("*.json")):
+        name = path.stem
+        raw = json.loads(path.read_text())
+        for prop in raw.get("props", []) or []:
             if prop.get("cls") != "toy":
                 continue
             size = prop.get("size")
             if not isinstance(size, list) or len(size) < 3:
                 continue          # spheres and cylinders carry their own form
             height = float(size[2])
+            seen += 1
             assert height >= shut_gap, (
                 f"{name}: {prop['id']} is {height * 1000:.0f} mm tall — thinner "
                 f"than the {shut_gap * 1000:.0f} mm the jaws shut to, so the pads "
                 "can only brush it along the floor")
+    assert seen >= 5, f"only {seen} box toys checked — is the glob still right?"
