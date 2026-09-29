@@ -11,6 +11,15 @@ hold each to the thing it fixes:
 
 * a BLEND ran a fixed duration whatever distance it had to cover -> `_paced`
 * a STATE TRANSITION is a step input of the servo's tracking lag -> `_slew`
+
+`tests/test_moss.py::test_no_scripted_transition_is_a_step_input_to_the_servos`
+is the older half of this and not a duplicate: it asserts a ramp EXISTS in
+`deploy` and `tuck`, deliberately "the mechanism rather than a speed, because
+the speed depends on the pose". These assert the speed anyway, because that is
+what the pose-dependence turned out to cost — `pinch/align`'s ramp existed the
+whole time and still demanded 8.4-10.0 rad/s. (That test also cites an XL330's
+5.6 rad/s no-load speed; MOSS's arm is SO-101-derived and its servos are not
+the duck's, so the number is the right idea about the wrong motor.)
 """
 import dataclasses
 import math
