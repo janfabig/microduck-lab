@@ -286,17 +286,44 @@ def test_the_flat_gate_reads_a_MEDIAN_and_keeps_each_targets_own_readings():
     assert b2._flat_target()
 
 
-def test_only_a_WIDE_flat_thing_gets_the_deep_descend_and_the_across_grip():
+def test_only_a_WIDE_flat_thing_gets_the_deep_descend_and_the_long_axis_grip():
     """The card needs the pads pressed below the floor clearance and the jaws
-    on its LONG side. The 8 mm butt and 12 mm cap are flat too and need
+    on its LONG side. The 8 mm butt and the 12 mm cap are flat too and need
     NEITHER — giving them the deep descend left `cap0` on the floor in 7 of 11
-    runs. So both ride on flat AND wider than `pinch_wide_m`."""
-    from microduck_local.brain.tidy_moss import TidyMossParams
+    runs, and letting the butt read as wide left IT on the floor 11 of 20
+    against 0. So both ride on flat AND wider than `pinch_wide_m`, and that
+    threshold sits in a MEASURED gap: within pick range each prop's apparent
+    size is all but exact (p25 = median = p75) — cap 0.015, butt 0.030, block
+    0.040, paper 0.044, ball/squat 0.050, card 0.060, cans 0.115."""
+    from microduck_local.brain.tidy_moss import TidyMoss, TidyMossParams
     p = TidyMossParams()
     assert p.pinch_flat_floor_m < p.pinch_floor_m      # deeper, and negative
     assert p.pinch_flat_m > 0.0 and p.pinch_wide_m > 0.0
-    def wide(size):
-        return size > p.pinch_wide_m
+    b = TidyMoss()
 
-    assert wide(0.060) and wide(0.044)                 # card readings
-    assert not wide(0.030) and not wide(0.015)         # butt, cap
+    def wide(size):
+        b._fix_sizes = [size] * 8
+        return b._wide_target()
+
+    assert wide(0.060)                                 # card0, the one target
+    for other in (0.015, 0.030, 0.040, 0.044, 0.050):  # cap, butt, block,
+        assert not wide(other), other                  # paper, ball/squat
+    b._fix_sizes = [0.060] * 3                         # too few to judge
+    assert not b._wide_target()
+
+
+def test_the_jaws_close_ALONG_a_wide_flat_things_long_axis():
+    """The most expensive naming trap in this brain: `pinch_grip="across"`
+    reads like the right choice for a card and is the wrong one. Measured in
+    the room it put the jaw axis 85-89 deg from the card's long axis on EVERY
+    close — squeezing its 40 mm short side, which lifted it 0/15 on the bench;
+    "along" drops that error to 1.4 deg. The butt must keep the global, which
+    is "along" for its 8 mm diameter."""
+    from microduck_local.brain.tidy_moss import TidyMoss
+    b = TidyMoss()
+    b._target_flat, b._fix_sizes = True, [0.060] * 8      # the card
+    assert b._grip_axis() == "along"
+    b._target_flat, b._fix_sizes = True, [0.030] * 8      # the butt: flat, small
+    assert b._grip_axis() == b.p.pinch_grip
+    b._target_flat, b._fix_sizes = False, [0.115] * 8     # a can
+    assert b._grip_axis() == b.p.pinch_grip

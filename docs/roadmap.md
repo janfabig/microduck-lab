@@ -17730,10 +17730,11 @@ object: `can0`, approached 9 times, never binned.)
   2.4 s turn — `pinch_turn_s` (3.2 s), which fixed exactly this for the butt,
   only applies when `_pinched` is set.
 
-**RESOLVED 2026-09-29: card0 0/20 -> 5/20, and the mission is unchanged.**
-Three knobs were wrong AT ONCE, which is why each alone measured null. Fixing
-all three (20 paired seeds, 5 min): `card0` in the bin **5/20 against 0/20**,
-total binned 80 v 81 (-0.05 +- 0.48), so the card is free.
+**RESOLVED 2026-09-29: card0 0/24 -> 10/24, and the room gets CLEANER.**
+24 paired moss-yard seeds of 5 min: total binned **113 v 98, +0.62 +- 0.27**,
+`card0` in the bin **10/24 against 0/24**, `block0` +5 and `paper0` +3, and no
+regression on the cigarette — routing flat things to the pinch pays for
+itself. FOUR things were wrong at once, which is why each alone measured null.
 
 1. **Gate the pinch on HEIGHT, not width** (`pinch_flat_m` = 0.015). Height
    comes from the head camera, which is level with the base:
@@ -17744,12 +17745,24 @@ total binned 80 v 81 (-0.05 +- 0.48), so the card is free.
    gating on a single reading pinched `paper0`, a 22 mm cube, 8 times in a run
    and missed every one. The readings are kept PER TARGET; one shared list
    mixed the cube's into the card's.
-2. **Jaws across its LONG side** (`pinch_wide_m` = 0.035), for a flat object
-   wider than that. The butt is the other way round and keeps "along" — a
-   global flip to "across" measured 13 v 22 binned and cost the cigarette.
+2. **Jaws on its LONG side**, for a flat object wider than `pinch_wide_m`.
+   IK'd onto the card at 30 poses, its short side across the jaws never lifted
+   it (0/15). THE NAMING IS A TRAP: `pinch_grip="across"` is the intuitive
+   choice and it is the WRONG one — measured in the room it put the jaw axis
+   85-89 deg from the card's long axis on EVERY close, squeezing the 40 mm
+   side; `"along"` drops that error to 1.4 deg. (A global flip to "across" is
+   separately bad: 13 v 22 binned, and it costs the cigarette.)
 3. **Press the pads below the floor clearance** (`pinch_flat_floor_m` =
-   -0.014), for a WIDE flat object only. Scoping matters: giving the 8 mm butt
-   and 12 mm cap the same descend left `cap0` on the floor in 7 of 11 runs.
+   -0.014), for a WIDE flat object only. Scoping matters twice: giving the
+   8 mm butt and the 12 mm cap the same descend left `cap0` on the floor in 7
+   of 11 runs, and reading the width from ONE tick let the BUTT fall into the
+   card's branch and left it on the floor 11 of 20 against 0.
+4. **Both gates read a MEDIAN, per target.** Within pick range each prop's
+   apparent size is all but exact (p25 = median = p75): cap 0.015, butt 0.030,
+   block 0.040, paper 0.044, ball/squat 0.050, **card 0.060**, cans 0.115 — so
+   `pinch_wide_m` = 0.050 sits in a real gap. The spread that made an earlier
+   probe read "card 0.030-0.060" was the FIX jumping between objects, not the
+   sensor.
 
 The window this targets was measured by IK'ing onto the card at 30+ poses: pad
 midpoint near 12 mm with the long side across the jaws and good centring lifts
@@ -17757,28 +17770,21 @@ it **9/9**; at the 0.0178 m the room used to reach it is 0-2/9, and with the
 short side across the jaws 0/15. Closure barely matters (8-36 mm inner gaps
 all hold; 40 mm and wider never touch it).
 
-**5/20 IS THE CEILING of a jaws-down pinch, and the reason is the pads.**
-The pad is 36 mm tall, so its midpoint cannot go below 18 mm without pushing
-through the floor: measured in the room, every close bottoms out at
-**0.0178-0.0184 m** whatever `pinch_flat_floor_m` asks for. The bench's 9/9
-was at 0.012 — the pads pressed INTO the floor, which a commanded arm in a
-settle loop can do and the room cannot. At the height the room can actually
-reach the bench gives 2-5/9, which is the 25% the room now gets: the loop is
-performing at its primitive's limit, not below it.
+**What the ceiling ISN'T.** It looked like the pads: they are 36 mm tall, so
+the midpoint cannot go below 18 mm without pushing through the floor, and every
+close in the room bottoms out at 0.0178-0.0184 m. But the BENCH bottoms out at
+the same 0.0179 when asked for 0.012, with the tool equally straight down
+(tilt 0.0 deg) — so the room was always in the right depth regime and the
+"press harder" reading was wrong. The real gap was the jaw axis, 88 deg out.
+Also checked and NOT the problem: the wrist camera's aim (5-12 mm at settle, no
+better with a median) and the grip check (`_gripped_raw` needs BOTH pads on the
+same body — forcing it would carry air, the documented "lift, stow and release
+nothing 24 times in 300 s"; and a probe that read `_pinched` at grab time,
+before the rise sets it, made it look unset when it was not).
 
-What is NOT the problem, each checked: the wrist camera's aim is good (mean
-error 5-12 mm at settle, no better with a median, and the offset at the close
-is now 5-12 mm against 18 mm before); the grip check is right to report no
-hold (`_gripped_raw` needs BOTH pads on the same body — forcing it would carry
-air, the documented "lift, stow and release nothing 24 times in 300 s"); and
-`_pinched` IS set on a real pick (a probe that read the flag at grab time,
-before the rise sets it, made it look otherwise).
-
-**The next lever is a TILTED approach, not more tuning.** `MossKinematics.solve`
-hard-constrains the tool straight down, so the pads meet a flat card face-on
-and bottom out on the floor. An angled wrist would let a pad edge reach under
-a 4 mm card instead of resting beside it. That is a new IK orientation target
-and a real piece of work; everything short of it is at its limit.
+**Still 14/24 left, and the next lever is CENTRING.** The offset at the close
+is 5-12 mm where a butt sits at 2 mm, and the bench curve is steep: 9/9
+centred, 6/9 at 10 mm, 2/9 at 20 mm.
 
 **The three fixes, tried one at a time, each measured null** — recorded so the
 next person does not repeat them singly: (moss-yard, 5-6 paired seeds):

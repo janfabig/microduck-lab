@@ -222,13 +222,18 @@ class TidyMossParams:
     #: median error <= 5 mm over 11 props, separating card/butt/cap at
     #: 0.004-0.007 from block/paper/ball/squat at 0.020+ and the cans at 0.058.
     pinch_flat_m: float = 0.015
-    #: A flat object WIDER than this wants the jaws across its LONG side.
+    #: A flat object WIDER than this is a CARD rather than a butt: it wants
+    #: the jaws on its long side and the pads pressed below the clearance.
+    #: MEASURED within pick range, where each prop's apparent size is all but
+    #: exact (p25 = median = p75): cap 0.015, butt 0.030, block 0.040, paper
+    #: 0.044, ball/squat 0.050, **card 0.060**, cans 0.115. 0.050 sits in the
+    #: gap. Read as a MEDIAN (`_wide_target`), never one tick.
     #: MEASURED by IK'ing onto `card0` at 30 poses: with its short side across
     #: the jaws it never lifted (0/15); with the long side across them and the
     #: pads low it lifted 9/9 when centred. The butt is the other way round —
     #: `pinch_grip` stays "along" for it — which is why this is per object and
     #: not a new global.
-    pinch_wide_m: float = 0.035
+    pinch_wide_m: float = 0.050
     pinch_grip: str = "along"
     pinch_look_s: float = 0.25
     pinch_hover_m: float = 0.05
@@ -973,6 +978,7 @@ class TidyMoss:
         #: uses the median.
         self._fix_height: float | None = None
         self._fix_heights: list[float] = []
+        self._fix_sizes: list[float] = []
         self._fix_heights_at: tuple[float, float] | None = None
         #: Was this target gated as FLAT? The pinch descends deeper for it and
         #: grips across its long side.
@@ -1047,11 +1053,15 @@ class TidyMoss:
             if w_was is None or math.hypot(w_now[0] - w_was[0],
                                            w_now[1] - w_was[1]) > 0.08:
                 self._fix_heights = []
+                self._fix_sizes = []
             self._fix_heights_at = w_now
         self._fix_height = float(z)
         self._fix_heights.append(float(z))
+        self._fix_sizes.append(float(size))
         if len(self._fix_heights) > 25:
             del self._fix_heights[0]
+        if len(self._fix_sizes) > 25:
+            del self._fix_sizes[0]
         return (x, y)
 
     def _toys_in_view(self, frame) -> list[tuple[float, float, float, float, float]]:
@@ -1157,6 +1167,31 @@ class TidyMoss:
             return False
         hs = sorted(self._fix_heights[-15:])
         return len(hs) >= 5 and hs[len(hs) // 2] < self.p.pinch_flat_m
+
+    def _grip_axis(self) -> str:
+        """"along" or "across" — which way the jaws close on this target.
+
+        THE NAMING IS A TRAP, and it cost a battery. "across" reads like the
+        right choice for a card ("jaws across the card"), and it is the wrong
+        one: MEASURED in the room it put the jaw axis 85-89 deg from the
+        card's long axis on EVERY close, squeezing its 40 mm short side, which
+        lifted it 0/15 on the bench. "along" puts the jaw axis ALONG the long
+        axis — squeezing the 60 mm side — and the error falls to 1.4 deg.
+        The butt keeps whatever `pinch_grip` says, which is "along" for its
+        8 mm diameter; flipping that global to "across" measured 13 v 22
+        binned and cost the cigarette.
+        """
+        if self._target_flat and self._wide_target():
+            return "along"
+        return self.p.pinch_grip
+
+    def _wide_target(self) -> bool:
+        """Is this flat target WIDE — a card rather than a butt? The MEDIAN of
+        its apparent sizes: one tick overlaps (card 0.030-0.060, butt
+        0.030-0.044), and reading one flipped the BUTT into the card's deep
+        descend and left it on the floor in 11 of 20 runs against 0."""
+        ss = sorted(self._fix_sizes[-15:])
+        return len(ss) >= 5 and ss[len(ss) // 2] > self.p.pinch_wide_m
 
     def _at_rest(self, senses: Senses) -> bool:
         arm = senses.arm or {}
@@ -1502,9 +1537,7 @@ class TidyMoss:
             if pc["yaws"]:
                 c = float(np.mean(np.cos(2 * np.array(pc["yaws"]))))
                 s = float(np.mean(np.sin(2 * np.array(pc["yaws"]))))
-                grip = p.pinch_grip
-                if self._target_flat and (self._fix_size or 0.0) > p.pinch_wide_m:
-                    grip = "across"          # a card: jaws on its LONG side
+                grip = self._grip_axis()
                 jaw_yaw = 0.5 * math.atan2(s, c) + (
                     0.0 if grip == "along" else math.pi / 2)
                 roll = K.roll_for(pc["hover_pose"], jaw_yaw)
@@ -1517,7 +1550,7 @@ class TidyMoss:
             # the clearance: the 8 mm butt and the 12 mm cap already get
             # enough pad overlap, and giving them the deep descend cost cap0
             # (left on the floor in 7 of 11 runs against ~0 before).
-            deep = self._target_flat and (self._fix_size or 0.0) > p.pinch_wide_m
+            deep = self._target_flat and self._wide_target()
             floor_m = p.pinch_flat_floor_m if deep else p.pinch_floor_m
             grasp = np.array([obj[0], obj[1], K.pad_half + floor_m]) + sag
             pose, res = K.solve(grasp, roll, over_pose)

@@ -283,11 +283,11 @@ of 63, and a base-locked policy measured 23.7 degrees of chassis turn instead
 of 0.3. The second and third of those happened AFTER the guard existed,
 because it covered some of the flags and read as covering all of them.
 
-### Five ways a measurement here has lied, and the check for each
+### Six ways a measurement here has lied, and the check for each
 
 The first four happened on 2026-09-25, in one session, to numbers that were
 then reported as findings; the fifth on 2026-09-28, and it cost a 48-seed
-battery. None was a subtle statistical problem; each was an instrument that
+battery; the sixth on 2026-09-29, and it survived one. None was a subtle statistical problem; each was an instrument that
 could not answer the question it was pointed at.
 
 **1. Measuring through your own reimplementation instead of the production
@@ -352,6 +352,19 @@ And when a test mocks the input, add one that asks the production world for it
 overlay drew a wedge from the lens out to the detector's range, claiming floor
 beside the tracks that is below the camera's vertical view; the map now takes
 the reportable band from the robot.
+
+**6. A NAME THAT READS RIGHT AND MEANS THE OPPOSITE.** `pinch_grip="across"`
+is the obvious setting for "close the jaws across this card", and it is the
+wrong one: measured in the room it put the jaw axis **85-89 deg** from the
+card's long axis on EVERY close, squeezing the 40 mm short side, which lifts
+it 0/15 on the bench. `"along"` — which reads like the opposite — drops the
+error to 1.4 deg. The A/B that shipped on the intuitive reading still came out
++card0, so the mistake survived a 20-seed battery and was only caught by
+measuring the ANGLE itself.
+→ *Measure the geometry the knob controls, not just the outcome it is supposed
+to move.* One probe comparing the commanded jaw axis against the object's true
+long axis would have caught it before the battery, and now guards it
+(`test_the_jaws_close_ALONG_a_wide_flat_things_long_axis`).
 
 **The habit that catches all of it: plant the regression.** Every test added
 that day was run against a deliberately broken version first — the axis
