@@ -2030,8 +2030,7 @@ class MossBody(BodyBase):
         Imported lazily, like the G1's and MARS's: a machine with no MOSS
         assets must still be able to train the duck.
         """
-        from .moss_env import (TASKS, MossApproachEnv, MossPickEnv,
-                               MossStowEnv)
+        from .moss_env import TASKS, MossApproachEnv, MossPickEnv, MossStowEnv
         by_task = {"pick": MossPickEnv, "approach": MossApproachEnv,
                    "stow": MossStowEnv}
         if task in by_task:
@@ -2081,7 +2080,7 @@ class MossBody(BodyBase):
         env for exactly that reason: an env that reads its own environment
         trains fine and leaves no record of what it trained on.
         """
-        from .moss_env import (APPROACH_RUNG_BOX, RUNGS, STOW_RUNG_GRIP)
+        from .moss_env import APPROACH_RUNG_BOX, RUNGS, STOW_RUNG_GRIP
         ladders = {
             "pick": ("MICRODUCK_MOSS_PICK_RUNG", "pick_rung", tuple(RUNGS)),
             "approach": ("MICRODUCK_MOSS_APPROACH_RUNG", "approach_rung",

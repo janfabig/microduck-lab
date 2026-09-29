@@ -9,13 +9,13 @@ been shown to fail).
 """
 from __future__ import annotations
 
+import inspect
 import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
 
 import mujoco
-import inspect
 import numpy as np
 import pytest
 
@@ -896,10 +896,10 @@ def test_the_tidy_brain_ignores_its_own_bin_and_anything_behind_it():
     detection of its own load, which sits behind the camera and folds back to
     a small x.
     """
+    import dataclasses
+
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
-
-    import dataclasses
     brain = TidyMoss()
     # The FILTERS, alone: with `object_memory` a sighting also needs a second
     # frame in the same place (tests/test_moss_search.py), which one call
@@ -1452,6 +1452,7 @@ def test_a_roster_slot_reads_the_bodys_env_knobs_too():
     `slot_env` is the one seam every body env in the lab passes through.
     """
     import os
+
     from microduck_local.lab import robots as lab_robots
 
     prev = os.environ.get("MICRODUCK_MOSS_PICK_RUNG")
@@ -1674,8 +1675,6 @@ def test_the_arm_lives_against_its_torque_clamp():
     reachable, which would mean the penalty had quietly become decoration —
     the `board_margin` mistake this repo already made once.
     """
-    import mujoco as _mj
-
     from microduck_local.robots.moss_env import MossPickEnv
 
     env = MossPickEnv(seed=1, pick_rung=2, torque_sat=0.05, overspeed=0.3)
@@ -1734,7 +1733,6 @@ def test_the_handover_contract_is_inside_the_arms_reach():
     lo = np.array([m.joint(j).range[0] for j in names])
     hi = np.array([m.joint(j).range[1] for j in names])
     rng = np.random.default_rng(0)
-    far, ymax_at_far = 0.0, 0.0
     lo_x, hi_x, ymax = moss.PICK_HANDOVER_BOX
     reach = []
     for _ in range(20000):
@@ -2054,10 +2052,10 @@ def test_the_brain_folds_with_the_learned_leg_at_25hz_on_a_leash():
     `moss.CONTROL_HZ` not every 50 Hz world tick, and every goal kept within
     `fold_leash_rad` of the measured joint. Run per world tick, its command
     moved at 1.5 rad/s — the fast motion the leg exists to avoid."""
+    import dataclasses
+
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
-
-    import dataclasses
 
     b = TidyMoss()
     if "fold" not in b._sessions:
@@ -2182,6 +2180,7 @@ def test_the_base_lines_up_for_the_pick_at_twice_the_old_speed():
 
 def _drop_on_the_lift(**kw):
     import dataclasses
+
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
 
@@ -2334,6 +2333,7 @@ def test_a_light_object_dropped_into_the_empty_bin_stays_on_its_floor():
     every moss-yard run. `bin_floor_governs` lets the floor's own (stiffer)
     contact catch it; his geometry is unchanged."""
     import json as _json
+
     from microduck_local.viz_server import load_policy_infer
     from microduck_local.world import scenario as S
     from microduck_local.world_server import WorldState
@@ -2366,6 +2366,7 @@ def _stow_path_bin_contact(lift: float) -> float:
     legs from the lift pose, with `shoulder_lift` held at `lift` over the
     turn — kinematically, the rover parked in moss-yard."""
     import json as _json
+
     from microduck_local.robots import moss_env as ME
     from microduck_local.viz_server import load_policy_infer
     from microduck_local.world import scenario as S

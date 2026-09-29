@@ -44,9 +44,10 @@ def test_the_short_fold_route_clears_the_body():
 def _fly_route(**params):
     """Step the brain's tuck from the release pose with a servo that keeps
     up; (seconds to leave `tuck`, largest per-tick joint step, final state)."""
+    import dataclasses
+
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
-    import dataclasses
 
     # The OLD fold (to the old tuck): `plan_routes` and the rest pose off
     # unless a test asks — tests/test_moss_motion.py has the planned one.
@@ -69,9 +70,10 @@ def _fly_route(**params):
 
 
 def test_the_scripted_fold_runs_at_the_cap_and_only_from_the_release_pose():
+    import dataclasses
+
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
-    import dataclasses
 
     t, worst, state = _fly_route()
     assert state == "search"

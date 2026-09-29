@@ -2957,6 +2957,7 @@ def test_the_watched_trainee_mirrors_the_trainers_env_knobs():
     call from `trainee_env_kwargs` and `pick_rung` disappears below.
     """
     import os
+
     import microduck_local.viz_server as V
     from microduck_local.behaviors.moss_tasks import MOSS_PICK, MOSS_STOW
 

@@ -124,6 +124,7 @@ def _scan(x, y, yaw, t=0.0, box=BOX, n=88, fov_deg=87.0, mount=(0.156, 0.0), ext
     """A depth row from (x, y, yaw) inside a walled box: each ray's range to
     the first wall (or to `extra`, a disc (cx, cy, r)), as a LidarFrame."""
     import numpy as np
+
     from microduck_local.sensors.lidar import LidarFrame
     a = np.deg2rad(np.linspace(fov_deg / 2, -fov_deg / 2, n))
     c, s = math.cos(yaw), math.sin(yaw)
@@ -132,10 +133,14 @@ def _scan(x, y, yaw, t=0.0, box=BOX, n=88, fov_deg=87.0, mount=(0.156, 0.0), ext
     for ai in a:
         dx, dy = math.cos(yaw + ai), math.sin(yaw + ai)
         ts = []
-        if dx > 1e-9: ts.append((box[1] - ox) / dx)
-        if dx < -1e-9: ts.append((box[0] - ox) / dx)
-        if dy > 1e-9: ts.append((box[3] - oy) / dy)
-        if dy < -1e-9: ts.append((box[2] - oy) / dy)
+        if dx > 1e-9:
+            ts.append((box[1] - ox) / dx)
+        if dx < -1e-9:
+            ts.append((box[0] - ox) / dx)
+        if dy > 1e-9:
+            ts.append((box[3] - oy) / dy)
+        if dy < -1e-9:
+            ts.append((box[2] - oy) / dy)
         r = min(ts)
         if extra is not None:
             cx, cy, cr = extra
@@ -254,8 +259,10 @@ def test_moss_yard_mounts_the_realsense_depth_and_it_sees_the_far_wall():
     written with `tof: null` has no depth at all."""
     import json
     from pathlib import Path
+
     import mujoco
     import numpy as np
+
     from microduck_local.viz_server import load_policy_infer
     from microduck_local.world import scenario as S
     from microduck_local.world_server import WorldState

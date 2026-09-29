@@ -20,10 +20,10 @@ import pytest
 from microduck_local.behaviors import BEHAVIORS, BehaviorEnv
 from microduck_local.behaviors.dribble import (
     DRIBBLE_BALL_ROLLING,
-    DRIBBLE_ROLL_LADDER,
     DRIBBLE_GONE,
     DRIBBLE_KEEP,
     DRIBBLE_LOST,
+    DRIBBLE_ROLL_LADDER,
     _ball_backward,
     _ball_believed,
     _ball_overshoot,

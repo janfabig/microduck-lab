@@ -328,7 +328,9 @@ class RoomMap:
         fi, fj = self._ij(fx[free], fy[free])
         far = r < (1e9 if max_range is None else max_range - 1e-6)
         hi, hj = self._ij(ox + ca * r, oy + sa * r)
-        inside = lambda i, j: (i >= 0) & (i < self.n) & (j >= 0) & (j < self.n)
+        def inside(i, j):
+            return (i >= 0) & (i < self.n) & (j >= 0) & (j < self.n)
+
         m = inside(fi, fj)
         fflat = np.unique(fj[m] * self.n + fi[m])
         m = inside(hi, hj) & far
