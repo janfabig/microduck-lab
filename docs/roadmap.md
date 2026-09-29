@@ -17633,10 +17633,119 @@ during `lift`, where the camera stares at the object IN THE JAWS and the
 kinematics place it on the floor 0.3 m away. The rest gate is what keeps the
 camera pointed at floor.
 
-**Not done, and why:** re-aiming the rest pose for reportable area. Scored
-honestly (floor inside 0.60 m, not out to 1.5 m as the first search did) the
-optimum is 0.279 m² against the shipped 0.168 — but every such pose aims 65 deg
-down, which is the "just pointed at the track" this pose was asked to stop
-doing, and 66% more strip cannot show up against a ±0.10 MDE on a saturated
-yard. If the wrist channel is ever worth widening, the lever is the **window**
-(10% of a run) or a room that does not saturate, not the aim.
+**Asked afterwards: is off to the side really the best place for it?**
+Answered, and the answer is yes — but not for the reason the first search gave.
+
+*Sideways is FORCED, not chosen.* Searching poses by where the wrist camera
+aims: in the front 60 deg only **25-74 poses of ~3600 are legal**. What kills
+them is the turning circle (47-60% of rejections — the arm must stay inside the
+0.222 m the chassis sweeps, the rule that exists because an arm catching a wall
+pinned the robot for two minutes) and the arm standing in the front camera's
+view (16-25%).
+
+*And front-left is exactly where the misses are.* 26,893 samples of "object on
+the floor within 0.8 m that the front camera cannot see", 6 seeds: all six put
+the median at **bearing +26 to +60 deg**, ~0.6 m out. The patrol turns left, so
+objects fall off the left shoulder of the front camera's 87 deg. The mirror
+sector on the right carries a fifth of the traffic.
+
+*The shipped aim is beatable on paper.* Scored on those real misses rather than
+on area: shipped (+100 deg) catches 11.5%, the best legal pose (+113 deg,
+camera 0.10 m further out to the left, near edge 0.14 m instead of 0.21)
+catches 17.0%, and the +120..150 sector reaches 19.4%. A nudge will not do it
+(12.6% within 0.3 rad). The ranking is robust: it survives distinct-visit
+weighting (18 -> 24 episodes, 11 -> 14 objects) and dropping the dominant
+object (13.8% -> 19.2%).
+
+**MEASURED OFF, and this is the point — the proxy did not convert.** The
++113 deg pose on 48 paired seeds against the shipped one, both scanning:
+
+| | shipped +100 | candidate +113 |
+|---|---|---|
+| in the bin at 5 min | 464 | 454 (-0.21 ± 0.13) |
+| at 15 min | 479 | 481 (+0.04 ± 0.04) |
+| arm on the rover | 6.9 s | 9.1 s |
+| arm stalled | 5.2 s | 10.8 s |
+| median time to 8 / 10 binned | 158 / 222 s | 196 / 284 s |
+
+48% more missed-object coverage, **24-28% slower to clear the room**. The
+speed is the resolvable part (median time to 8 binned 196 s against 158 s, and
+stall time doubled); the 5-minute count's -0.21 ± 0.13 sits under this
+comparison's ~0.37 MDE and is suggestive only, and the 15-minute count is
+flat. The
+candidate joins the release and lift poses only through a HUB (3 waypoints
+against 2), and that doubled the stall time — the exact thing the motion work
+had just bought. Coverage of the blind spot is not the binding constraint;
+route directness is. The shipped pose stays, and so does the rule: a rest pose
+is a MOTION decision first and a sensing one second.
+
+Re-aiming for reportable AREA is dead for the same reason plus one more: the
+area optimum (0.279 m² against 0.168) aims 65 deg down, which is the "just
+pointed at the track" this pose was asked to stop doing. If the wrist channel
+is ever worth widening, the lever is the **window** (10% of a run) or the
+turning circle, not the aim.
+
+### The one object that is never binned is a GRASP failure, not a blind spot (2026-09-29)
+
+`card0` is left on the floor in 47 of 48 runs at 15 min and is 29% of all the
+front camera's missed-object samples, which made it look like a sensing
+problem. It is not. Measured over 3 seeds:
+
+* the detector reports it on **90-92%** of the ticks it is geometrically in
+  view — a HIGHER rate than every other object (75-78%);
+* it sits in the brain's object memory for more than half the run (1559-1742
+  of 3000 sampled ticks);
+* the robot **approaches it 4-5 times a run** — more attempts than any other
+  object gets (0-2) — and `_give_up` never fires, so it simply goes back;
+* it is a 4 mm flat card (`size [0.06, 0.04, 0.004]`, centre z 0.002 m against
+  0.057 m for everything else).
+
+So the residual is the jaws failing on a near-flat object, and it costs 4-5
+wasted approaches a run on top of the object itself. (Seed 1 has a second such
+object: `can0`, approached 9 times, never binned.)
+
+**Measured at contact (2026-09-29), and it is NOT a training problem.**
+
+* `card0` is **in distribution**: the pick env's own `card` prop is 40-70 x
+  24-44 x 4-12 mm and `card0` is 60 x 40 x 4 mm, 8 g.
+* The gripper **can** lift it. IK'd onto the card at its best pose, 30
+  combinations of orientation, height and closure: it lifts +215 mm — but only
+  in a narrow window. **Tool point at 12 mm**; every attempt at 18 or 24 mm
+  failed. **The card's LONG side across the jaws**; with the short side across
+  them it failed 15/15. Closure is permissive: inner gaps of 8-36 mm all hold,
+  40 mm and wider never touch it.
+* **The learned pick aims a can at it.** It grips at `GRASP_HEIGHT_M` = 50 mm
+  with a 62 mm inner gap — right for a 66 x 115 mm can, 38 mm above a card
+  lying at 2 mm and 2 mm wider than its long side. Measured consequence, one
+  seed: **19 of 21 carries never lift it past 13 mm** — the jaws brush it along
+  the floor, it slips, and the loop repeats about once a second.
+* **The scripted pinch cannot reach it either, structurally.** It descends to
+  `pad_half + pinch_floor_m` = 18 + 1.5 = **19.5 mm**, a clearance rule that
+  keeps the pads 1.5 mm off the floor. An 8 mm butt still gets 6.5 mm of pad
+  overlap, which is why the cigarette works; a 4 mm card gets 2.5 mm, and the
+  window needs 12 mm — i.e. the pads must reach BELOW that clearance.
+* The alignment input exists: the wrist sensor reports a yaw for `card0` on
+  68% of pinch ticks (butt 78-89%), so the wrist CAN roll to it.
+* The two rare successes are lost on the stow swing at z 0.30, on the fast
+  2.4 s turn — `pinch_turn_s` (3.2 s), which fixed exactly this for the butt,
+  only applies when `_pinched` is set.
+
+**Three fixes tried, none sufficient on its own** (moss-yard, 5-6 paired seeds):
+gating the pinch on HEIGHT instead of width (height is recoverable as
+`0.075 + range x sin(elevation)`, median error <= 5 mm, and separates
+card/butt/cap at 0.004-0.007 from everything else at 0.020+) doubled pinch
+attempts, 20 v 10, and left `card0` 0/5; flipping `pinch_grip` to "across"
+was worse overall (13 v 22 binned) and cost the cigarette, which needs
+"along"; dropping the flat-object descend to 12 mm did not bin it either on a
+first seed. The bench grasp works and the room does not, so the remaining work
+is getting the approach INTO that 12 mm window (and the grip axis chosen per
+object rather than globally) — bounded work on the scripted pinch, not a
+retrain.
+
+**A caution recorded with it:** the first instrument for this said card0 was
+"never the target", which was wrong — `_target_world` is in the ODOM frame and
+was being compared against MuJoCo world coordinates, so it read zero for EVERY
+object, including the nine that were binned that run. A per-object counter that
+reads zero for the objects you know succeeded is the instrument failing, not
+the finding. The working version counts the object nearest the jaws on entry to
+a pick state, which has no frame to get wrong.

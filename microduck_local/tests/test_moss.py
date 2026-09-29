@@ -2057,9 +2057,15 @@ def test_the_brain_folds_with_the_learned_leg_at_25hz_on_a_leash():
     from microduck_local.brain.runtime import Senses
     from microduck_local.brain.tidy_moss import TidyMoss
 
+    import dataclasses
+
     b = TidyMoss()
     if "fold" not in b._sessions:
         pytest.skip("no fold policy on disk (runs/teach-moss_fold-*)")
+    # The learned fold is the FALLBACK since the planned routes landed: with
+    # `plan_routes` on, `tuck` goes home by a checked route and this leg never
+    # runs (asserted below). Its own behaviour is still pinned here.
+    b.p = dataclasses.replace(b.p, plan_routes=False, rest_pose=None)
     arm = dict(zip(moss.ARM_JOINTS, (-1.80, -0.97, 0.10, 1.55, -1.30)))
     arm[moss.GRIPPER_JOINT] = 0.03
     b._to("tuck", 0.0)
@@ -2077,6 +2083,20 @@ def test_the_brain_folds_with_the_learned_leg_at_25hz_on_a_leash():
             assert abs(g[j] - arm[j]) <= b.p.fold_leash_rad + 1e-9, (j, g[j])
     assert goals[0][moss.GRIPPER_JOINT] == pytest.approx(moss.MISSION_OPEN_M,
                                                          abs=0.005)
+
+    # ...and with the routes ON, the fold leg is not what runs: `tuck` goes
+    # home by a route checked on the visible meshes instead. Measured: that
+    # is what the 48-seed battery ran, and it took arm-on-rover contact from
+    # 146 s a run to 6 s.
+    b2 = TidyMoss()
+    b2._to("tuck", 0.0)
+    ran = 0
+    for k in range(10):
+        before = b2._last_policy_t
+        b2.step(Senses(t=0.02 * k, odom=(0.0, 0.0, 0.0), speed=0.0,
+                       arm=dict(arm)))
+        ran += b2._last_policy_t != before
+    assert b2.p.plan_routes and ran == 0, ran
 
 
 def test_the_pick_runs_at_its_trained_25_hz_in_the_brain():

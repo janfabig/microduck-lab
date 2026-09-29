@@ -548,6 +548,19 @@ class TidyMossParams:
     #: the "just pointed at the track" this pose was asked to stop doing, and
     #: the extra area buys nothing measurable (see `wrist_scan`). So the
     #: outward aim is kept deliberately, not by oversight.
+    #: AND IT IS NOT WORTH RE-AIMING AT THE BLIND SPOT EITHER (2026-09-29).
+    #: Asked whether off-to-the-side is really the best place: sideways is
+    #: FORCED — in the front 60 deg only 25-74 poses of ~3600 are legal, killed
+    #: by the turning circle (47-60%) and by the arm standing in the front
+    #: camera's view (16-25%) — and front-left, at bearing +26..+60 deg, is
+    #: exactly where the misses are (26,893 samples, 6 seeds). This pose
+    #: catches 11.5% of them; a legal pose at +113 deg catches 17.0%. On 48
+    #: paired seeds that pose put **454** in the bin at 5 min against this
+    #: pose's **464**, and took 24-28% longer to clear the room (8 binned at
+    #: 196 s against 158 s), because it reaches the release and lift poses only
+    #: through a HUB and stalled 10.8 s a run against 5.2. A rest pose is a
+    #: MOTION decision first and a sensing one second: route directness is the
+    #: binding constraint, not blind-spot coverage.
     rest_pose: tuple[float, ...] | None = (-0.4472, -0.8663, 0.1402, 1.4805, -1.1788)
     #: Every move to and from rest (sweep out, fold home, straight home after
     #: a drop) by a route clear of the visible arm (`route_margin_m`), timed
