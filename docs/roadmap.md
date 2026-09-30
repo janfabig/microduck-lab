@@ -18131,3 +18131,13 @@ run is the kind of impossible number that announces itself, which is the only
 reason it was caught before a conclusion was written on it. Counting SUBSTEPS
 with any contact is the fix, and the `longest unbroken` column — which is what
 found the trapped cap — exists only because of it.
+
+**Every number in these two entries depends on `runs/`, which is gitignored.**
+`tidy_moss` loads its learned pick from there (`MICRODUCK_MOSS_POLICY`, the
+shipped `moss-pick-v1`), and without it the brain takes a different path
+through the pick entirely. Verifying the committed tree by extracting
+`git archive HEAD` and running the probe there gives 12.4 s of contact in 60 s
+on seed 0, against 5.5 s over the whole 300 s in the working checkout — not a
+contradiction and not a regression, just a different robot. A `git archive`
+extraction is the right place to prove imports resolve and the wrong place to
+re-measure behaviour; re-run these in a checkout that has the policy.
