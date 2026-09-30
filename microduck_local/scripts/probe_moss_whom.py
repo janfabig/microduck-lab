@@ -119,9 +119,29 @@ for seed in seeds:
             touch["max_points"] = max(touch["max_points"], points)
         else:
             touch["run"] = 0
+    def count_binned():
+        bx0, by0, byaw = w.ducks["m0"].driver.pose(d)
+        cb, sb = np.cos(-byaw), np.sin(-byaw)
+        n = 0
+        for p_ in sc0.props:
+            q = d.xpos[m.body(p_.id).id]
+            dx, dy = q[0] - bx0, q[1] - by0
+            qx, qy = dx * cb - dy * sb, dx * sb + dy * cb
+            if (moss.BIN_INTERIOR_X[0] < qx < moss.BIN_INTERIOR_X[1]
+                    and moss.BIN_INTERIOR_Y[0] < qy < moss.BIN_INTERIOR_Y[1]
+                    and q[2] > moss.BIN_FLOOR_Z):
+                n += 1
+        return n
+
+    # Score at a horizon where the task is NOT yet finished as well as at the
+    # end: 88 of 88 props binned cannot tell a slower robot from a faster one,
+    # and the arm rate cap read free at 300 s and -1.50/seed at 180 s.
+    marks = {}
     mujoco.mj_step = watched
     try:
         for k in range(int(SECONDS / 0.02)):
+            if k and k % 1500 == 0:
+                marks[round(k * 0.02)] = count_binned()
             state[0] = str(getattr(br, "state", ""))
             # `_target_world` is only set inside `creep`; the fix the brain
             # is ACTING on (`_fix`, base frame) is live in every driving
@@ -138,6 +158,11 @@ for seed in seeds:
             w.step()
     finally:
         mujoco.mj_step = real
+    # The MISSION cost, in the same run: a safety change that stops the rover
+    # touching litter by never reaching it is not a safety change. Counted the
+    # way `probe_moss_runover.py` counts it — in the bin's frame, above its
+    # floor.
+    binned = count_binned()
     tot = sum(v["n"] for v in hits.values())
     tw = whom["target"] + whom["bystander"] + whom["no_target"]
     print(f"  WHOM: target {100*whom['target']/max(tw,1):.0f}%  "
@@ -152,7 +177,11 @@ for seed in seeds:
         top = sorted(v["states"].items(), key=lambda kv: -kv[1])[:3]
         print(f"    {name:8s} {v['n']:6d} substeps  max {v['f']:6.1f} N   "
               + ", ".join(f"{s or '-'}:{n}" for s, n in top))
+    print(f"    binned {binned}/{len(sc0.props)}  "
+          + " ".join(f"{t_}s:{n_}" for t_, n_ in sorted(marks.items())))
     out.append({"seed": seed, "touch": dict(touch),
+                "binned": binned, "props": len(sc0.props), "marks": marks,
+                "whom": dict(whom),
                 "hits": {k: {"n": v["n"], "f": v["f"], "states": v["states"]}
                          for k, v in hits.items()}})
 if len(sys.argv) > 3:

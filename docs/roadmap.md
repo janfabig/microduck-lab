@@ -18221,3 +18221,54 @@ doubled drops (it grabs at a range the jaws cannot work). The change this
 measurement supports is to split the filter: keep close detections for MEMORY
 and avoidance, exclude them only from TARGET SELECTION. Untested — and the
 bystander finding above says that is where the 95% lives.
+
+### The split is built, and it is a NO — those detections are of the object in the jaws (2026-09-29)
+
+`near_min_x` in `brain/tidy_moss.py` does exactly what the item above asks for:
+`_toys_in_view` takes the range floor as an argument, `_see` keeps `min_x`
+(0.30, unchanged — that is the gate whose lowering doubled the drops) and
+`_remember` gets a lower one while the arm is stowed. Four tests
+(`tests/test_moss_near_memory.py`), each shown to fail against a planted
+regression, against an unplanted control that stays green.
+
+**Eight paired 300 s seeds, `near_min_x` 0.186 against 0.30: BYTE-IDENTICAL.**
+Contact seconds, longest unbroken contact, distinct props touched, peak force,
+binned at 180 s, binned at 300 s, bystander share — every column, every seed.
+Not a dead hook this time (`_after_tuck`'s lesson); the hypothesis was wrong.
+
+**Why, and it is the correction to the item above.** That item counted what
+`min_x` discards and never asked what those detections are OF.
+`scripts/probe_moss_close_states.py` splits them by brain state and caller:
+
+    seed 0  1381 rejected   tuck 351  stow 341  lift 286  deploy 109  creep 97
+                            pinch 90  release 88   search 15   approach 4
+    seed 1  1863            creep 505 lift 311  stow 309  pinch 292  deploy 185
+                            tuck 122  release 97   search 26   approach 16
+    seed 2   908            lift 298  creep 232  pinch 210  deploy 155
+                                                  search  0   approach 13
+
+The arm is out in nearly all of them: the close thing in frame is the object in
+the jaws, or the one being reached for, and `min_x` is the correct floor there.
+`_remember` runs once per detector FRAME rather than per 50 Hz tick, so of the
+19/42/13 sightings in `search`/`approach` the split admits **2, 7 and 2 per
+300 s run**. A percentage of all detections was the wrong denominator.
+
+**The complement agrees.** `scripts/probe_moss_near_band.py` asks the truth how
+often a prop is actually in the 0.19–0.30 m band while the rover drives:
+**41, 62 and 55 ticks — about one second in five minutes** — and every instance
+is an upright CAN. Never a cap or a card, because at `CAMERA_VFOV_DEG` 62° from
+`CAMERA_POS` 0.075 m up, **a flat object clears the bottom of the frame only
+past x = 0.281 m**. `min_x` at 0.30 was already sitting on the camera's own
+floor horizon. There is no blind band to open.
+
+**So the run-overs are not a sensing-gate problem.** A rover that is to see
+what it is about to drive over needs the geometry changed — the head camera
+pitched down (`CAMERA_PITCH_RAD` is 0.0), or the wrist camera's floor scan
+(`_scan_wrist`, which already feeds the memory on its own path) used while
+driving rather than only at rest. Both are untested, both are a measurement
+away, and neither is a filter change.
+
+`near_min_x` stays at 0.30 — kept rather than deleted, like `drop_back_m` and
+`arm_slew_cap`, because the parameter is where the next person finds the
+number. `moss.FRONT_EXTENT_M` / `moss.HALF_WIDTH_M` (0.186 / 0.212, re-measured
+off the MJCF AABB in the `m0/rover` frame) landed with it.

@@ -108,6 +108,15 @@ RAW_BASE = ("https://raw.githubusercontent.com/metrox-eth/moss-jev/"
 #: not a rear extent.)
 REAR_EXTENT_M = 0.231
 
+#: ...AND IN FRONT, m, from the same AABB sweep: the front bumper is +0.186
+#: and the widest point (the tracks) is +-0.212. Anything the camera reports
+#: nearer than `FRONT_EXTENT_M` is the robot itself; anything past it inside
+#: `HALF_WIDTH_M` of the centre line is in the way of the tracks. Needed by
+#: `brain/tidy_moss.py`'s `near_min_x`, which has to tell "litter I am about
+#: to drive over" from "my own chassis" and had been throwing away both.
+FRONT_EXTENT_M = 0.186
+HALF_WIDTH_M = 0.212
+
 #: Where `fetch()` puts them. `MICRODUCK_MOSS_DIR` moves the cache, the way
 #: `MICRODUCK_MARS_DIR` and `MICRODUCK_G1_DIR` do, so a scratch checkout can
 #: verify without touching the main one's download.
@@ -2359,7 +2368,7 @@ __all__ = ["ARM_HOME", "ARM_JOINTS", "ASSETS", "BASE_BODY", "BASE_JOINTS",
            "EQUIPPED_BASE_MASS_KG",
            "SHIPPED_BASE_MASS_KG",
            "CACHE_DIR", "CONTRACT_ID", "CONTROL_HZ", "FINGER_JOINTS",
-           "REAR_EXTENT_M",
+           "REAR_EXTENT_M", "FRONT_EXTENT_M", "HALF_WIDTH_M",
            "DEPLOY_STANDOFF_M", "DROP_POSE", "GRASP_HEIGHT_M",
            "GRASP_JAW_CTRL_M", "GRASP_PHYSICS_DT", "GRASP_POSE",
            "GRASP_STANDOFF_M", "LIFT_POSE", "TUCK_POSE",

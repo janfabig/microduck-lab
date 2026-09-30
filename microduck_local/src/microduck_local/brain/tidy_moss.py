@@ -859,8 +859,12 @@ class TidyMossParams:
     #: A detection older than this is not a fix any more.
     stale_s: float = 1.0
     #: Only cans IN FRONT are targets: a bearing past this is something the
-    #: robot would have to turn for, and a "can" nearer than `min_x` is
-    #: either under the chassis or the one already in the bin.
+    #: robot would have to turn for, and something nearer than `min_x` is
+    #: too close for the arm to work on — it would unfold into the object.
+    #: (This note used to say such a detection "is either under the chassis
+    #: or the one already in the bin". MEASURED false: all of them are real
+    #: litter ahead of the bumper, and the bin has its own test. See
+    #: `near_min_x`, which is what that mistake cost.)
     #: What the detector models an upright can as: `Prop.radius()` is the
     #: largest half-extent, so for a 66 x 115 mm can it is 0.0575 m.
     can_radius_m: float = 0.0575
@@ -876,6 +880,68 @@ class TidyMossParams:
     range_from_detector: bool = True
     max_bearing: float = 1.05          # ~60 deg
     min_x: float = 0.30
+    #: THE SAME FLOOR, FOR THE MEMORY ONLY, m — the one that is not a target
+    #: test. `min_x` above gates what the robot may DRIVE AT; this gates what
+    #: it is allowed to KNOW. They were one number, and that was the bug.
+    #:
+    #: MEASURED (2026-09-29, `scripts/probe_moss_dropped_dets.py`, three 300 s
+    #: moss-yard seeds): of 38 686 `toy` detections the colour camera makes,
+    #: `min_x` throws away **7.6%, 10.9% and 13.3%** — between one and two
+    #: thousand sightings per five minutes, and the verdict below is about
+    #: which objects those turn out to be. Every one sits at x 0.187 to
+    #: 0.300, so **100% are ahead of the front bumper**
+    #: (`moss.FRONT_EXTENT_M`, 0.186): not one is the chassis, and the bin —
+    #: the other thing the comment on `min_x` claims to be rejecting — has its
+    #: own test on the next line which fired **zero** times in all three runs.
+    #: Nor is any of this a depth problem: `range_from_detector` ranges each
+    #: object by its apparent width in the COLOUR image, and the depth row
+    #: only builds the obstacle map. The camera sees them. The brain binned
+    #: the detection.
+    #:
+    #: And `_toys_in_view` feeds `_remember` as well as `_see`, so such an
+    #: object was not merely passed over as a target — it never entered
+    #: `ObjectMemory` at all. This splits the two floors so it can: the
+    #: targeting floor is untouched (lowering `min_x` itself was tried and
+    #: doubled the drops — the jaws cannot work at 0.2 m), while the memory
+    #: keeps the sighting, and the patrol's `choose` phase can then route
+    #: back to a viewing distance for it, which is the "pull back and
+    #: re-prioritise" behaviour already written but with nothing to act on.
+    #:
+    #: **OFF, and it is a measured NO — the percentages above are real and
+    #: they are not what they look like.** Eight paired 300 s seeds, 0.186
+    #: against 0.30 (2026-09-29): contact seconds, longest unbroken contact,
+    #: distinct props touched, peak force, binned at 180 s and binned at
+    #: 300 s all came back **BYTE-IDENTICAL on every seed**. Not a dead hook
+    #: this time — the reason is in what those thousand rejected detections
+    #: are OF. Broken down by brain state, they land in `creep`, `pinch`,
+    #: `lift`, `stow`, `tuck`, `deploy` and `release`: the arm is out and the
+    #: close thing in frame is the object in the jaws or the one being
+    #: reached for. Only **15/26/0 per run happen in `search`** and 4/16/13
+    #: in `approach`, and `_remember` (which runs per detector FRAME, not per
+    #: 50 Hz tick) sees a fifth of those — so the split admits **2, 7 and 2
+    #: detections per 300 s run**. Counting what a filter discards is not
+    #: counting what it costs.
+    #:
+    #: The complement says the same thing from the other side: over 300 s of
+    #: driving, litter is inside the 0.19-0.30 m band at all for **41, 62 and
+    #: 55 ticks — about one second**, and every instance is an upright CAN.
+    #: Never a cap or a card, because at `CAMERA_VFOV_DEG` 62 deg and
+    #: `CAMERA_POS` 0.075 m up, a flat object clears the bottom of the frame
+    #: only past **x = 0.281 m**. `min_x` at 0.30 was already sitting on the
+    #: camera's own floor horizon; there is no blind band worth opening.
+    #:
+    #: Kept rather than deleted because the number is the finding and this is
+    #: where the next person looks for it — the same reason `drop_back_m` and
+    #: `arm_slew_cap` are still here at 0. `moss.FRONT_EXTENT_M` (0.186) is
+    #: the value to set for the split; 0.30 is the old behaviour and, on this
+    #: measurement, identical behaviour.
+    #:
+    #: Either way it lifts only while the arm is stowed (`search`/`approach`).
+    #: Deployed, the gripper and whatever is in it fill the near frame, and a
+    #: carried object at 0.2 m would be written down as litter lying wherever
+    #: the rover happened to be standing — the same reason `_remember`
+    #: already gates its `looked()` pruning on those two states.
+    near_min_x: float = 0.30
     #: How many times a can may be attempted before it is written off, and
     #: how close two fixes have to be to count as the same can. A can against
     #: a wall cannot be approached — the robot would have to get behind it —
@@ -1197,11 +1263,19 @@ class TidyMoss:
             del self._fix_sizes[0]
         return (x, y)
 
-    def _toys_in_view(self, frame) -> list[tuple[float, float, float, float, float]]:
+    def _toys_in_view(self, frame, min_x: float | None = None
+                      ) -> list[tuple[float, float, float, float, float]]:
         """(range, x, y, size) of each toy detection, BASE frame, that could
-        be a target: in front, not under the robot, not in its own bin."""
+        be a target: in front, not under the robot, not in its own bin.
+
+        `min_x` overrides the range floor. It is a parameter because the two
+        callers want different ones: `_see` picks something to drive at and
+        must not pick what it cannot reach, while `_remember` only writes down
+        what is there — see `near_min_x`, which is the whole of that argument.
+        """
         if frame is None or not frame.detections:
             return []
+        floor = self.p.min_x if min_x is None else float(min_x)
         out = []
         for det in frame.detections:
             if det.cls != "toy":
@@ -1217,7 +1291,7 @@ class TidyMoss:
             # one can picked, then 80 s of cycling on nothing).
             if abs(det.bearing) > self.p.max_bearing:
                 continue                       # not in front
-            if x < self.p.min_x:
+            if x < floor:
                 continue                       # under the robot, or behind
             if (moss.BIN_INTERIOR_X[0] - 0.05 < x < moss.BIN_INTERIOR_X[1] + 0.05
                     and moss.BIN_INTERIOR_Y[0] < y < moss.BIN_INTERIOR_Y[1]):
@@ -1263,7 +1337,10 @@ class TidyMoss:
             return
         self._det_t = frame.t
         pts = []
-        for rng, x, y, size, _z in self._toys_in_view(frame):
+        # The arm is only out of the way in these two; `near_min_x` says why.
+        floor = (p.near_min_x if self.state in ("search", "approach")
+                 else p.min_x)
+        for rng, x, y, size, _z in self._toys_in_view(frame, floor):
             w = self._world((x, y))
             if w is not None:
                 pts.append((w[0], w[1], size, rng))

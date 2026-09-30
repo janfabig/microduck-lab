@@ -31,7 +31,11 @@ for seed in seeds:
     close_x = []
     orig = TM.TidyMoss._toys_in_view
 
-    def spy(self, frame, _orig=orig):
+    # `_toys_in_view` now takes the range floor as a second argument (the
+    # split, `near_min_x`); pass it straight through, or a call from
+    # `_remember` would bind the floor to `_orig` and this probe would run
+    # the brain's sensing against itself.
+    def spy(self, frame, min_x=None, _orig=orig):
         if frame is not None and frame.detections:
             for det in frame.detections:
                 if det.cls != "toy":
@@ -49,7 +53,7 @@ for seed in seeds:
                     tally["own_bin"] += 1
                 else:
                     tally["kept"] += 1
-        return _orig(self, frame)
+        return _orig(self, frame, min_x)
 
     TM.TidyMoss._toys_in_view = spy
     try:
