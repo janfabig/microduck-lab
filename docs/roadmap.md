@@ -18337,3 +18337,54 @@ the yaw away from it and cap `vx`. Score it on `probe_moss_whom.py` (contact
 seconds AND longest unbroken contact) with binned at 180 s and 300 s as the
 mission cost, on the same 8 paired seeds. The failure mode to watch is the
 corridor swallowing the TARGET's neighbours and stalling the approach.
+
+### The bystander dodge: reading the memory as obstacles WORKS, and is free (2026-09-29)
+
+The change the measurement above pointed at, built and scored.
+`bystander_avoid_m` in `brain/tidy_moss.py`: while driving (`search` and
+`approach` only — `creep`/`deploy`/`pinch` are deliberately closing on the
+target and contact there is the job), every confirmed `ObjectMemory` entry
+that is not the thing being driven at is projected into the base frame. If it
+sits within 0.45 m ahead and inside the track corridor
+(`moss.HALF_WIDTH_M` + 0.03), the yaw is biased away from it and `vx` is cut,
+both scaled by an urgency that is 1 dead ahead and close, 0 at the edges of
+the box so the nudge fades instead of switching off. Only the WORST offender
+moves the wheels — litter lies in clusters, and summing would swing the nose
+by the count. No new sensing: the position it acts on was recorded when the
+object was comfortably in view.
+
+Eight tests (`tests/test_moss_bystander.py`), each shown to fail against one
+of six planted regressions (sign flip, target not exempt, phantoms admitted,
+cluster summing, fires while reversing, state gate dropped), against a green
+unplanted control — which caught a stale plant copy the first time round.
+
+**64 paired 300 s seeds**, 0.45 against off, 56 after setting aside the pins:
+
+    contact s, DRIVING states   5.30 -> 1.11 median   -2.86 +- 0.89   p=0.044
+                                36 seeds down, 20 up
+    contact s, all states       4.99 -> 2.89 median   -2.23 +- 1.05   p=0.141
+    distinct props touched                            -0.3  +- 0.2
+    peak force N                                      -1.7  +- 1.7
+    longest unbroken s                                -0.18 +- 0.12
+    binned @180 s                                     +0.14 +- 0.15
+    binned @300 s                                     +0.09 +- 0.10
+
+Contact time in the states the mechanism can act on is roughly halved, and
+**the mission is not paid for it**: binned moves slightly UP at both horizons,
+including the 180 s one that caught the arm rate cap costing -1.50/seed where
+300 s read free. 0.45 m was chosen before the battery and never tuned against
+it. SHIPPED ON.
+
+**The 8-seed battery could not have decided this** — MDE 3.7 s against a 2.3 s
+effect, sign p 0.29. 32 seeds put the mean delta at +3.77 +- 10.92 while the
+median went DOWN and 19 of 32 seeds improved, which is the distribution
+announcing itself: in ~6% of runs a prop wedges against the hull and the
+rover sits on it for **200 s of a 300 s run**, two orders of magnitude above
+a normal run's 5 s. Those have to be counted as a separate failure, not as a
+tail. Read them on medians and sign tests, not means.
+
+**What it does NOT fix: that pin.** 4 of 64 seeds in EACH arm — steering
+earlier neither causes nor prevents it, and the longest unbroken contact is
+unmoved. That is the next thing worth a probe: what wedges, where against the
+hull, and whether the rover can feel it (the `stall_mps`/`stall_s` touch
+detector already exists and fires `_room.feel`, but only on a patrol leg).

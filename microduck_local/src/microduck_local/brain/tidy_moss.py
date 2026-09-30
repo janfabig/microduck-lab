@@ -162,6 +162,63 @@ class TidyMossParams:
     creep_kp: float = 1.2
     #: Turn rate while searching, rad/s.
     search_wz: float = 0.8
+    #: STEER ROUND THE LITTER IT IS NOT GOING FOR: how far ahead to look, m.
+    #: 0 = off.
+    #:
+    #: MEASURED (2026-09-29, `scripts/probe_moss_blindspot.py`, 178 contacts
+    #: over eight 300 s seeds): of everything the rover's driving surfaces
+    #: touch, only **12% was ever inside its own target gate** — it is hitting
+    #: things it is not going for, which `probe_moss_whom.py` had already put
+    #: at 95% of contact time. And it is not blind to them: between **26% and
+    #: 60% are in `ObjectMemory` AT THE MOMENT OF CONTACT** (the range is the
+    #: match radius, 0.10 to 0.20 m), 54-86% at some point in the three
+    #: seconds before. It knows and drives through them anyway, because
+    #: nothing in the drive path reads the memory as an OBSTACLE —
+    #: `_patrol_step` reads it only to choose a goal, and `approach` is an
+    #: open-loop heading at `approach_kp` toward the fix.
+    #:
+    #: So this needs no new sensing, which is the whole argument for it: the
+    #: two camera changes that suggest themselves were both measured first and
+    #: neither reaches the geometry. Pitching the head down takes "in frame
+    #: before contact" from 20% to 25% on the driving contacts, because the
+    #: binding limit is LATERAL — 0.156 m of setback and an 87 deg lens cover
+    #: a floor strip 0.09 m wide at x = 0.25 against tracks 0.42 m wide
+    #: (`scripts/probe_moss_camera_cover.py`). The wrist camera at rest aims
+    #: out to the robot's left and covers none of the zone. The position this
+    #: acts on was recorded when the object WAS comfortably in view.
+    #:
+    #: **ON, and it is a measured YES — the first one in this line of work.**
+    #: 64 paired 300 s seeds, 0.45 against off (2026-09-29), 56 of them after
+    #: setting aside the runs where a prop wedges against the hull (below):
+    #:
+    #:     contact s, DRIVING states  5.30 -> 1.11 median   -2.86 +- 0.89
+    #:                                36 seeds down, 20 up, sign p = 0.044
+    #:     contact s, all states      4.99 -> 2.89 median   -2.23 +- 1.05
+    #:     distinct props touched                           -0.3  +- 0.2
+    #:     binned @180 s                                    +0.14 +- 0.15
+    #:     binned @300 s                                    +0.09 +- 0.10
+    #:
+    #: Contact time while driving is roughly halved and **the mission is not
+    #: paid for it** — binned moves slightly UP at both horizons, including
+    #: the 180 s one that caught the arm rate cap costing -1.50/seed where
+    #: 300 s read free. 0.45 m was chosen before the battery and never tuned
+    #: against it.
+    #:
+    #: **What it does NOT fix: the pin.** In 4 of 64 seeds a prop ends up
+    #: wedged against the hull and stays there for 200 s of a 300 s run —
+    #: 4 of 64 in BOTH arms, the same seeds' worth either way, so this is a
+    #: separate failure and steering earlier neither causes nor prevents it.
+    #: The longest unbroken contact is likewise unmoved (-0.18 +- 0.12). What
+    #: this buys is fewer and shorter glancing contacts, not a rescue.
+    bystander_avoid_m: float = 0.45
+    #: The corridor is the track width (`moss.HALF_WIDTH_M`, 0.212) plus this.
+    bystander_margin_m: float = 0.03
+    #: Peak yaw bias away from it, rad/s — full scale is `search_wz`, 0.8.
+    bystander_wz: float = 0.8
+    #: ...and how much of the forward speed to give up at full urgency. A
+    #: diff-drive cannot sidestep: the nose has to come round, and at
+    #: `approach_mps` 0.30 there are two seconds of corridor to do it in.
+    bystander_slow: float = 0.5
     #: How long each arm move is given before the next state, in seconds.
     #: The servo is his (kp 70 / kv 3), and these are what the scripted probe
     #: used; a shorter deploy drops the can, a shorter stow drops it outside.
@@ -2348,6 +2405,77 @@ class TidyMoss:
         due, self._back_due = self._back_due, False
         self._to("back_off" if due and self.p.drop_back_m > 0.0 else "search", t)
 
+    def _dodge_keep(self) -> list[tuple[float, float]]:
+        """World (x, y) of everything the rover is deliberately driving AT.
+
+        The target is not a bystander — steering away from the thing being
+        collected would stall the mission, which is the failure mode this
+        whole change has to be scored against. Two of them, because the
+        state machine has two notions of "what I am going for": the live
+        fix in `approach`, and the memory entry a patrol leg was sent to.
+        """
+        keep = []
+        # `self._fix` is used RAW, not through `step`'s `stale_s` test, so a
+        # fix the state machine has already given up on goes on exempting a
+        # 0.22 m patch of floor until something replaces it. Conservative —
+        # it can only suppress a dodge, never invent one — and it is what the
+        # 64-seed battery in `bystander_avoid_m` measured, so it stays as
+        # measured rather than being tidied afterwards.
+        if self._fix is not None:
+            w = self._world(self._fix)
+            if w is not None:
+                keep.append(w)
+        st = self._srch
+        if (st is not None and st.get("kind") == "memory"
+                and st.get("id") is not None and self._mem is not None):
+            e = next((e for e in self._mem.items if e.id == st["id"]), None)
+            if e is not None:
+                keep.append((e.x, e.y))
+        return keep
+
+    def _dodge(self, twist, note: str):
+        """Bias the drive away from remembered litter in the track corridor.
+
+        `bystander_avoid_m` carries the measurement. Only the WORST offender
+        moves the wheels: summing over a cluster would swing the nose by the
+        number of objects that happen to be lying together, and they lie
+        together often.
+        """
+        p = self.p
+        vx, vy, wz = twist
+        if vx <= 0.0 or self._mem is None or self._odom is None:
+            return twist, note                 # stopped or reversing: nothing to dodge
+        corridor = moss.HALF_WIDTH_M + p.bystander_margin_m
+        keep = self._dodge_keep()
+        worst = None
+        for e in self._mem.items:
+            if not self._mem.confirmed(e):
+                continue                       # seen once: may be a phantom
+            if any(math.hypot(e.x - kx, e.y - ky) < p.same_can_m
+                   for kx, ky in keep):
+                continue                       # this is the thing we want
+            b = self._to_base(e.x, e.y)
+            if b is None:
+                continue
+            bx, by = b
+            if not (0.0 < bx < p.bystander_avoid_m) or abs(by) >= corridor:
+                continue
+            # Nearer is more urgent, and dead ahead is more urgent than
+            # grazing the edge of the corridor: both terms are 1 at the worst
+            # and 0 where the object leaves the box, so the nudge fades out
+            # rather than switching off and jerking the nose back.
+            urg = ((p.bystander_avoid_m - bx) / p.bystander_avoid_m
+                   * (corridor - abs(by)) / corridor)
+            if worst is None or urg > worst[0]:
+                worst = (urg, by)
+        if worst is None:
+            return twist, note
+        urg, by = worst
+        # +wz is LEFT, so an object on the left (by > 0) subtracts.
+        wz -= math.copysign(p.bystander_wz * urg, by if by != 0.0 else 1.0)
+        vx *= max(0.0, 1.0 - p.bystander_slow * urg)
+        return (vx, vy, wz), note + " (easing round something in the way)"
+
     def _rear_blocked(self, gap_m: float) -> bool:
         """Is anything solid behind the back bumper, as far as the MAP knows?
 
@@ -3017,6 +3145,16 @@ class TidyMoss:
                     else "tuck: folding the arm home")
             if since >= p.tuck_s:
                 self._after_tuck(t)
+
+        # ROUND THE BYSTANDERS, and only while DRIVING. Not in `creep`,
+        # `deploy` or `pinch`: there the rover is deliberately closing the
+        # last few centimetres on its own target and contact is the job, not
+        # a fault. One place rather than in each branch, because `search`
+        # alone produces a twist from three of them (the spin, the patrol
+        # leg and the rim walk) — the last hook here that lived in one branch
+        # was dead and the A/B came back byte-identical (`_after_tuck`).
+        if p.bystander_avoid_m > 0.0 and self.state in ("search", "approach"):
+            twist, note = self._dodge(twist, note)
 
         # The PREVIOUS values update LAST, after the observation has used
         # them. Updating them at the top — which this did for one run — makes
