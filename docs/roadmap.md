@@ -18087,28 +18087,40 @@ seeds — baseline, back-off 0.18 m, and `min_x` 0.30 → 0.20.
     3              2.7        0.0         4.8    0.1 / 0.0 / 0.2
     4              7.8      175.0         0.3    0.8 / 172.7 / 0.1
     5              1.3        0.7       182.9    0.2 / 0.4 / 181.2
-    median        3.05       2.75        2.65
+    6             21.1        1.5         2.4    2.9 / 0.7 / 0.5
+    7              5.4        1.3         0.0    0.6 / 0.6 / 0.0
+    mean          5.99      23.75       24.56
+    median        4.40       1.80        2.15
 
-**On a typical seed neither fix changes anything** — medians 3.05, 2.75, 2.65 s.
-The means (3.6, 31.2, 32.4) are one outlier each and say nothing; the paired
-deltas, +27.6 ± 27.9 and +28.8 ± 30.6, are unresolved.
+**Neither fix is distinguishable from noise on the typical seed.** The medians
+(4.40 → 1.80 and 2.15) look like a halving and the median paired differences
+are −1.65 s and −1.80 s, but the SIGN TEST is what this sample supports:
+back-off better on 5 seeds of 8 and worse on 2 (p = 0.45), `min_x` better on 4
+and worse on 3 (p = 1.00). Five-two out of eight is what a coin does. The
+paired means, +17.8 ± 21.5 and +18.6 ± 23.4, are one outlier each.
+
+*This entry first reported the six seeds that had finished, whose medians were
+3.05 / 2.75 / 2.65 — flat rather than halved. Two more seeds moved the medians
+without moving the conclusion, which is the reason to run the test rather than
+eyeball the middle number.*
 
 **But each fix introduces a failure the baseline does not have.** In one seed
 apiece an object is held against the rover CONTINUOUSLY — 172.7 s with the
-back-off, 181.2 s with the wider gate — against a baseline worst of 0.8 s.
+back-off, 181.2 s with the wider gate — against a baseline worst of 2.9 s.
+Pinned for more than 10 s unbroken: **baseline 0 of 8 seeds, each fix 1 of 8.**
 Both times it is the same object: **`cap0`, the 15 × 12 mm, 2 g bottle cap**,
-the smallest thing in the room, pinned at 1.6–2.0 N and carried through
-`search`, `stow` and `deploy` for the rest of the run. It is never tidied, and
-on hardware it is a small hard object wedged under a moving track.
+the smallest thing in the room, held at 1.6–2.0 N and carried through `search`,
+`stow` and `deploy` for the rest of the run. It is never tidied, and on
+hardware it is a small hard object wedged under a moving track.
 
 The mechanism is the one thing the two fixes have in common: each makes the
 robot engage with objects very close to it, and the smallest object ends up
 under the chassis instead of in the jaws. So the answer to "back off after a
 drop" is not merely "it does not help" — **it creates the damage it was meant
-to prevent**, in 1 seed of 6.
+to prevent**, in 1 seed of 8, while its benefit is a coin flip.
 
 **What the baseline's contact actually is**, for whoever picks this up: short
-and forceful, not sustained — longest unbroken 0.8 s, up to 26.3 N against an
+and forceful, not sustained — longest unbroken 2.9 s, up to 26.3 N against an
 18 g can, and 92% of it in `creep`, `approach` and `deploy`. The robot
 shoulders litter aside while driving at a target; it does not drag it.
 
