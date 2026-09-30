@@ -18272,3 +18272,68 @@ away, and neither is a filter change.
 `arm_slew_cap`, because the parameter is where the next person finds the
 number. `moss.FRONT_EXTENT_M` / `moss.HALF_WIDTH_M` (0.186 / 0.212, re-measured
 off the MJCF AABB in the `m0/rover` frame) landed with it.
+
+### Neither camera: the rover already KNOWS about most of what it drives into (2026-09-29)
+
+Asked whether to pitch the head camera down or re-site the wrist camera. Both
+measured before building either, because the previous two fixes here were built
+first and measured null.
+
+`scripts/probe_moss_blindspot.py` finds every contact between a driving surface
+and a loose prop, then replays the **3 s before** it and asks where the object
+was and which sensor could have had it. 178 episodes, 8 seeds, 300 s:
+
+    ever in frame, head pitch    0 deg     43/178   24%
+    ever in frame, head pitch   10 deg     62/178   35%
+    ever in frame, head pitch   20 deg     69/178   39%
+    ever in frame, head pitch   30 deg     75/178   42%
+    ever inside the brain's TARGET gate    22/178   12%
+    ever in the object MEMORY              96..153/178   54-86%
+    in the object MEMORY *at contact*      46..107/178   26-60%
+
+(the memory range is the match radius, 0.10 m to 0.20 m; the loose end lets a
+neighbouring entry answer, the tight end may miss the right entry's own
+position error. Both ends are quoted because the conclusion does not depend on
+which is right.)
+
+**Pitching the head down is the wrong axis.** It helps a little — and the
+geometry in `scripts/probe_moss_camera_cover.py` says why it cannot help much:
+
+    base x |  covered |y| at head pitch 0 / 10 / 20 / 30 deg   (tracks: 0.212)
+     0.19  |  0.000   0.000   0.000   0.067
+     0.25  |  0.094   0.105   0.112   0.117
+     0.40  |  0.235   0.244   0.243   0.239
+
+Pitching moves the near EDGE in (0.247 -> 0.184 m) and the far field survives
+to about 40 deg, so the vertical limit is fixable. But the binding limit in the
+run-over zone is LATERAL: 0.156 m of setback and an 87 deg lens cover a strip
+0.09 m wide at x = 0.25 against tracks 0.42 m wide, and pitch moves that by
+2 cm. **The rover cannot see its own front corners at any pitch** — the median
+|bearing| at contact is 76 deg, outside the lens's 43.5 deg half-angle for
+165 of 178 episodes. Restricted to the DRIVING contacts (`search`/`approach`,
+69 of 178) a 30 deg pitch takes "ever in frame" from 20% to 25%. And these are
+frustum geometry, no occlusion and no detector, so they are upper bounds.
+
+**The wrist camera at rest looks the wrong way.** Base (+0.087, +0.052,
++0.302), aiming (-0.17, +0.90, -0.41) — out to the robot's LEFT, floor patch
+y +0.207..+2.960, **none** of it in the run-over zone. `_scan_wrist` already
+runs while driving (it gates on the arm being at rest, which `search` and
+`approach` hold), so the plumbing is there; it is the rest pose's aim that
+would have to change, and that pose is load-bearing elsewhere
+(`the-jam-can-be-load-bearing`).
+
+**So this is not a perception problem.** Between a quarter and two thirds of
+the things the rover drives into are in its own `ObjectMemory` at the moment of
+contact — 38-67% of the driving contacts — and only 12% were ever inside the
+brain's target gate, so they are bystanders it knows about and steers through.
+Nothing in the drive path consults the memory for obstacles: `_patrol_step`
+reads it only to CHOOSE a goal, and `approach` is an open-loop heading at
+`approach_kp` toward the fix.
+
+**Next, and this one has its premise measured first for a change:** a bystander
+check against the memory in the driving states — for each confirmed entry that
+is not the current target, if it falls inside the track corridor ahead, bias
+the yaw away from it and cap `vx`. Score it on `probe_moss_whom.py` (contact
+seconds AND longest unbroken contact) with binned at 180 s and 300 s as the
+mission cost, on the same 8 paired seeds. The failure mode to watch is the
+corridor swallowing the TARGET's neighbours and stalling the approach.
