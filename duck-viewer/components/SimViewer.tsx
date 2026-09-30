@@ -2079,7 +2079,7 @@ export default function SimViewer() {
         <button style={{ ...BTN, borderColor: showCam ? "#43c2b8" : BTN_BORDER }} onClick={() => setShowCam((v) => !v)} title="V: the selected duck's head camera, with the detector's boxes — and its wrist camera, on a robot that has one">
           cam
         </button>
-        <button style={{ ...BTN, borderColor: showLabels ? "#43c2b8" : BTN_BORDER }} onClick={() => setShowLabels((v) => !v)} title="L: the floating d0 · policy labels over the ducks">
+        <button style={{ ...BTN, borderColor: showLabels ? "#43c2b8" : BTN_BORDER }} onClick={() => setShowLabels((v) => !v)} title="L: every label that floats in the 3-D scene — the ducks' d0 · policy names, and the head camera's 'MOSS sees …' tags. The overlay's rings, sight lines and floor wedge are geometry, not labels, and stay with T.">
           🏷 labels
         </button>
         <button

@@ -33,6 +33,7 @@ import * as THREE from "three";
 import type { Scene } from "@/lib/lab";
 import { loadJSON, saveJSON } from "@/lib/persist";
 import { getSelectedDuck } from "@/lib/select";
+import { getDuckLabels } from "@/lib/ui";
 import { PanelToggle } from "./Panel";
 import { HANDLE, useDrag } from "./useDrag";
 import { OVERLAY_LAYER, quatRotate, type DetPayload, type SimClient } from "@/lib/sim";
@@ -67,8 +68,16 @@ const WEDGE_K = 12;
 /** The label for a row, worded as what MOSS can or cannot see and WHY —
  *  the first cut ("cap0 · too small at 1.7 m") read as a claim MOSS was
  *  making about the cap, when it is the simulator explaining why MOSS
- *  cannot see it. null = draw the ring only. */
-export function whyLabel(row: WhyRow, dist: number): string | null {
+ *  cannot see it. null = draw the ring only.
+ *
+ *  `labelsOn` is the 🏷 toggle and it is a REQUIRED argument, not a check the
+ *  caller is trusted to make first: the bug this signature exists for is a
+ *  label that nobody remembered to gate. There is no way to get text out of
+ *  here without answering the question, and a new caller that forgets does
+ *  not compile. (It cannot help a component that invents its own text — no
+ *  cheap check can — but it makes THIS text impossible to leak.) */
+export function whyLabel(row: WhyRow, dist: number, labelsOn: boolean): string | null {
+  if (!labelsOn) return null;
   const [name, why, p, , , , , nearSome, , by] = row;
   const d = `${dist.toFixed(1)} m`;
   switch (why) {
@@ -130,6 +139,19 @@ export function CamOverlay({
     const ls = lines.current;
     if (!ls) return;
     const f = client.frame;
+    // 🏷 labels covers EVERY piece of text floating in the 3-D scene, not just
+    // the ducks' names. These tags were the only labels a moss-yard has —
+    // `Duck.tsx` (the flag's other reader) never mounts there, because a
+    // non-duck body draws as `SimStage.RobotBody`, which has no name label —
+    // so the button governed nothing at all on that page while "MOSS sees
+    // can1 · 0.1 m" stayed on screen. The RINGS, sight lines, wedge and wrist
+    // cone are not labels and stay with this overlay's own toggle; turning
+    // text off must not cost you the geometry you came for.
+    //
+    // Read per FRAME, not subscribed: a `useSyncExternalStore` inside the r3f
+    // tree flushes unreliably when the write comes from the DOM tree
+    // (`lib/ui.ts` says why, and `Duck.tsx` reads it the same way).
+    const labelsOn = getDuckLabels();
     let n = 0;
     let nl = 0;
     let nf = 0;
@@ -194,7 +216,7 @@ export function CamOverlay({
           const c = COLORS[why] ?? COLORS.outside;
           ring(x, y, Math.max(r * 1.5, 0.045), c);
           if (why === "seen" || why === "marginal") seg(o, [x, y, z], c);
-          const text = whyLabel(row, Math.hypot(x - o[0], y - o[1]));
+          const text = whyLabel(row, Math.hypot(x - o[0], y - o[1]), labelsOn);
           if (text && nl < MAX_LABELS) {
             const g = groups.current[nl];
             const tag = tags.current[nl];
