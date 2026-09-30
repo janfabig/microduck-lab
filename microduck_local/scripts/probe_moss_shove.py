@@ -97,7 +97,7 @@ for seed in seeds:
         for k in range(int(SECONDS / 0.02)):
             state[0] = str(getattr(br, "state", ""))
             st.drive(np.zeros(3), "auto")
-        w.step()
+            w.step()
     finally:
         mujoco.mj_step = real
     tot = sum(v["n"] for v in hits.values())
