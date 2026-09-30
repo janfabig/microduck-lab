@@ -70,6 +70,12 @@ for seed in seeds:
             if int(m.geom_bodyid[g]) == bid:
                 prop_g[g] = p.id
     hits = {}
+    #: Substeps on which the rover touched ANY loose prop, and the longest
+    #: unbroken run of them. Counted per SUBSTEP, not per contact pair: an
+    #: object wedged against the hull reports three or four points at once,
+    #: and summing pairs gave 864 "contact seconds" in a 300 s run — a number
+    #: that cannot be a duration, which is how the bug announced itself.
+    touch = {"substeps": 0, "run": 0, "worst_run": 0, "max_points": 0}
     six = np.zeros(6)
     real = mujoco.mj_step
     state = [""]
@@ -77,6 +83,7 @@ for seed in seeds:
         real(mm, dd, nstep)
         if mm is not m:
             return
+        points = 0
         for c in range(dd.ncon):
             con = dd.contact[c]
             g1, g2 = int(con.geom1), int(con.geom2)
@@ -92,6 +99,14 @@ for seed in seeds:
                 r["n"] += 1
                 r["f"] = max(r["f"], float(np.linalg.norm(six[:3])))
                 r["states"][state[0]] = r["states"].get(state[0], 0) + 1
+                points += 1
+        if points:
+            touch["substeps"] += 1
+            touch["run"] += 1
+            touch["worst_run"] = max(touch["worst_run"], touch["run"])
+            touch["max_points"] = max(touch["max_points"], points)
+        else:
+            touch["run"] = 0
     mujoco.mj_step = watched
     try:
         for k in range(int(SECONDS / 0.02)):
@@ -101,13 +116,17 @@ for seed in seeds:
     finally:
         mujoco.mj_step = real
     tot = sum(v["n"] for v in hits.values())
-    print(f"\nseed {seed}: the rover touched litter on {tot} substeps "
-          f"({tot * 0.002:.1f} s), {len(hits)} distinct props")
+    print(f"\nseed {seed}: {touch['substeps'] * 0.002:.1f} s of contact "
+          f"({touch['substeps']} substeps), longest unbroken "
+          f"{touch['worst_run'] * 0.002:.1f} s, up to {touch['max_points']} "
+          f"points at once, {len(hits)} distinct props "
+          f"({tot} contact-pair substeps)", flush=True)
     for name, v in sorted(hits.items(), key=lambda kv: -kv[1]["n"]):
         top = sorted(v["states"].items(), key=lambda kv: -kv[1])[:3]
         print(f"    {name:8s} {v['n']:6d} substeps  max {v['f']:6.1f} N   "
               + ", ".join(f"{s or '-'}:{n}" for s, n in top))
-    out.append({"seed": seed, "hits": {k: {"n": v["n"], "f": v["f"], "states": v["states"]}
-                                       for k, v in hits.items()}})
+    out.append({"seed": seed, "touch": dict(touch),
+                "hits": {k: {"n": v["n"], "f": v["f"], "states": v["states"]}
+                         for k, v in hits.items()}})
 if len(sys.argv) > 3:
     Path(sys.argv[3]).write_text(json.dumps(out, indent=1))

@@ -18051,11 +18051,13 @@ are 0–10 discrete episodes per seed and the paired standard error is ±2.5 on 
 mean of 2: this benchmark cannot resolve either intervention, so both "nulls"
 above are unresolvable rather than flat (the soccer lesson, again). A
 continuous measure exists and is far cheaper per event — SECONDS OF HULL-AND-
-TRACK CONTACT with loose litter, sampled every 2 ms: 7.0 s and 16.0 s on the
-two seeds measured, peaking at **26.3 N** against an 18 g can, and landing in
-`approach`, `creep` and `deploy` — i.e. while driving at a target, which is the
-damage the report is actually about. Re-run both interventions against that
-before trying a third.
+TRACK CONTACT with loose litter, sampled every 2 ms, peaking at **26.3 N**
+against an 18 g can and landing in `approach`, `creep` and `deploy` — i.e.
+while driving at a target, which is the damage the report is actually about.
+Re-run both interventions against that before trying a third. (CORRECTED: the
+"7.0 s and 16.0 s" first written here were contact-PAIR substeps and about 3x
+inflated — the same seeds are 3.4 s and 5.5 s of contact TIME. The next entry
+has the fix and what the instrument then said.)
 
 **A caution recorded with it.** The first cut of the back-off hooked the one
 tuck branch that a drop does not take: with `plan_routes` on the fold goes home
@@ -18067,3 +18069,53 @@ of `tuck`; the flag is now read in one place (`_after_tuck`) for that reason.
 And the first contact probe counted 3.7M contact-substeps in a run that has
 150k, because it left the BIN in the rover's geoms and every delivered object
 resting in the basket counted as the rover touching litter.
+
+### The contact-seconds instrument, and what it said about both fixes (2026-09-29)
+
+The run-over count could not resolve either fix (±2.5 episodes on a mean of 2),
+so the question moved to a continuous measure: SECONDS OF CONTACT between the
+rover's hull and tracks and any loose prop, sampled every 2 ms
+(`scripts/probe_moss_shove.py`). Three arms, eight paired 300 s moss-yard
+seeds — baseline, back-off 0.18 m, and `min_x` 0.30 → 0.20.
+
+**Read the median, not the mean; then read the maximum for the hazard.**
+
+    seed      baseline   back-off   min_x .20    longest UNBROKEN contact (s)
+    0              5.5        2.1         1.9    0.8 / 0.8 / 0.5
+    1              3.4        3.4         3.4    0.7 / 0.7 / 0.6
+    2              0.7        6.0         0.8    0.1 / 0.5 / 0.6
+    3              2.7        0.0         4.8    0.1 / 0.0 / 0.2
+    4              7.8      175.0         0.3    0.8 / 172.7 / 0.1
+    5              1.3        0.7       182.9    0.2 / 0.4 / 181.2
+    median        3.05       2.75        2.65
+
+**On a typical seed neither fix changes anything** — medians 3.05, 2.75, 2.65 s.
+The means (3.6, 31.2, 32.4) are one outlier each and say nothing; the paired
+deltas, +27.6 ± 27.9 and +28.8 ± 30.6, are unresolved.
+
+**But each fix introduces a failure the baseline does not have.** In one seed
+apiece an object is held against the rover CONTINUOUSLY — 172.7 s with the
+back-off, 181.2 s with the wider gate — against a baseline worst of 0.8 s.
+Both times it is the same object: **`cap0`, the 15 × 12 mm, 2 g bottle cap**,
+the smallest thing in the room, pinned at 1.6–2.0 N and carried through
+`search`, `stow` and `deploy` for the rest of the run. It is never tidied, and
+on hardware it is a small hard object wedged under a moving track.
+
+The mechanism is the one thing the two fixes have in common: each makes the
+robot engage with objects very close to it, and the smallest object ends up
+under the chassis instead of in the jaws. So the answer to "back off after a
+drop" is not merely "it does not help" — **it creates the damage it was meant
+to prevent**, in 1 seed of 6.
+
+**What the baseline's contact actually is**, for whoever picks this up: short
+and forceful, not sustained — longest unbroken 0.8 s, up to 26.3 N against an
+18 g can, and 92% of it in `creep`, `approach` and `deploy`. The robot
+shoulders litter aside while driving at a target; it does not drag it.
+
+**An instrument failure worth the space.** The first cut summed contact PAIRS
+per substep, and a wedged object reports four to ten points at once: it
+returned **864 "contact seconds" in a 300 s run**. A duration longer than the
+run is the kind of impossible number that announces itself, which is the only
+reason it was caught before a conclusion was written on it. Counting SUBSTEPS
+with any contact is the fix, and the `longest unbroken` column — which is what
+found the trapped cap — exists only because of it.
