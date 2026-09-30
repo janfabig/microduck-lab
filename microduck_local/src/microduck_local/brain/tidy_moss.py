@@ -1067,8 +1067,11 @@ class TidyMoss:
         #: (`_wrist_floor_band`) — the map must not draw reach the sensor
         #: hasn't got.
         self._wcam: tuple[float, float, float, float, float] | None = None
-        #: (last emitted arm command, when) — `_slew`.
-        self._slew_from: tuple[dict | None, float] = (None, -1.0)
+        #: The last arm command this brain actually EMITTED, and when
+        #: (`_remember_arm`). Kept unconditionally — `_slew` is off by
+        #: default and `_ramp_from_here` needs the same answer.
+        self._last_arm: dict[str, float] | None = None
+        self._last_arm_t: float = -1.0
         self._pinch: dict | None = None
         self._release_from: float | None = None
         self._pinch_twist = (0.0, 0.0, 0.0)
@@ -1978,19 +1981,36 @@ class TidyMoss:
         """`carry_ease`: smoothstep — zero speed at both ends of a leg."""
         return k * k * (3.0 - 2.0 * k) if self.p.carry_ease else k
 
+    def _remember_arm(self, arm, t: float) -> None:
+        """The last arm command EMITTED, and when.
+
+        Kept on every tick, including the many that command no arm at all
+        (every `_to` handoff, `pinch: missed`, `_abort_drop`): `set_arm`
+        replaces the whole mapping and a state that names no arm leaves the
+        driver holding the last one, so across such a tick the COMMAND did not
+        move and only the clock did. Recording it the other way round — not
+        advancing the clock until the next dict — is what let `_slew`'s budget
+        grow across a gap: `room = cap * (t - t0)` over a 0.5 s run of
+        arm-less ticks is 1.5 rad at the shipped cap, which is no limit at
+        all, and those gaps are exactly the state transitions the limiter
+        exists for.
+        """
+        if isinstance(arm, dict):
+            self._last_arm = {j: float(arm[j]) for j in moss.ARM_JOINTS if j in arm}
+        self._last_arm_t = t
+
     def _slew(self, arm, t: float):
-        """`arm_slew_cap`: the arm command no further from the LAST command
-        than the cap allows in the time since it. The gripper passes through
-        (see the param)."""
+        """`arm_slew_cap`: the arm command no further from the LAST EMITTED
+        command than the cap allows in the time since it was emitted. The
+        gripper passes through (see the param)."""
         cap = float(self.p.arm_slew_cap)
         if cap <= 0.0 or not isinstance(arm, dict):
             return arm
-        last, t0 = self._slew_from
+        last, t0 = self._last_arm, self._last_arm_t
         if last is not None and t > t0:
             room = cap * (t - t0)
             arm = {**arm, **{j: float(np.clip(arm[j], last[j] - room, last[j] + room))
                              for j in moss.ARM_JOINTS if j in arm and j in last}}
-        self._slew_from = ({j: float(arm[j]) for j in moss.ARM_JOINTS if j in arm}, t)
         return arm
 
     def _paced(self, seconds: float, a, b, eased: bool = True) -> float:
@@ -2110,10 +2130,25 @@ class TidyMoss:
         tick of the state rather than trusting a command.
         """
         if self._ramp_from is None:
-            if senses.arm is None:
+            if senses.arm is not None:
+                self._ramp_from = {j: float(senses.arm.get(j, v))
+                                   for j, v in zip(moss.ARM_JOINTS, target)}
+            elif self._last_arm is not None and all(
+                    j in self._last_arm for j in moss.ARM_JOINTS):
+                # NO ARM READINGS THIS TICK, so there is nothing to snapshot —
+                # and the old fallback commanded `target` OUTRIGHT, which is
+                # the unbounded step input `arm_rate_cap` exists to remove
+                # (`_paced` below is reached only past this branch). The last
+                # command we EMITTED is where the driver is still holding the
+                # arm, so it is the honest start: ramp from there and the
+                # pacing applies as it does on every other tick.
+                self._ramp_from = dict(self._last_arm)
+            else:
+                # Genuinely cold: no readings and nothing emitted yet, which
+                # is the first tick of a run. Nothing can be ramped from an
+                # unknown pose; the arm is at its keyframe and this is the one
+                # case where the endpoint is all there is.
                 return _pose(target)
-            self._ramp_from = {j: float(senses.arm.get(j, v))
-                               for j, v in zip(moss.ARM_JOINTS, target)}
         seconds = self._paced(seconds, self._ramp_from, target, eased=False)
         k = min(1.0, max(0.0, since / max(seconds, 1e-3)))
         return {j: (1.0 - k) * self._ramp_from[j] + k * v
@@ -2810,7 +2845,9 @@ class TidyMoss:
                 if self._carry_jaw is not None:
                     jaw = self._carry_jaw
             arm = {**arm, moss.GRIPPER_JOINT: jaw}
-        return Intent(twist=twist, arm=self._slew(arm, t), note=note)
+        arm = self._slew(arm, t)
+        self._remember_arm(arm, t)
+        return Intent(twist=twist, arm=arm, note=note)
 
     def inputs(self) -> dict:
         """What the inspector shows: the fix this brain is acting on."""

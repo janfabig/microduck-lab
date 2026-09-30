@@ -123,17 +123,25 @@ def test_the_pinch_turns_the_jaws_onto_the_long_axis_at_the_cap():
     assert abs(arm["wrist_roll"] - over["wrist_roll"]) < 1e-6
 
 
+def _emit(b, arm, t):
+    """One tick as `TidyMoss.step` ends it: limit, then remember what went
+    out. Driving `_slew` alone would test a limiter with no memory."""
+    out = b._slew(arm, t)
+    b._remember_arm(out, t)
+    return out
+
+
 def test_the_slew_limiter_spreads_a_transition_step_without_losing_it():
     """A state transition hands the arm the servo's tracking lag as a step —
     0.449 rad, measured. The limiter pays it off over ticks; it must not
     swallow it, or the leg would never reach its pose."""
     b = _brain(arm_slew_cap=1.5)
     start = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
-    b._slew(dict(start), 0.0)
+    _emit(b, dict(start), 0.0)
     goal = {**start, "shoulder_pan": start["shoulder_pan"] + 0.449}
     cmd, worst = dict(start), 0.0
     for i in range(1, 100):
-        out = b._slew(dict(goal), i * DT)
+        out = _emit(b, dict(goal), i * DT)
         worst = max(worst, max(abs(out[j] - cmd[j]) for j in moss.ARM_JOINTS))
         cmd = {j: float(out[j]) for j in moss.ARM_JOINTS}
         if abs(cmd["shoulder_pan"] - goal["shoulder_pan"]) < 1e-9:
@@ -141,6 +149,25 @@ def test_the_slew_limiter_spreads_a_transition_step_without_losing_it():
     assert worst <= 1.5 * DT + 1e-9, f"{worst / DT:.2f} rad/s"
     assert abs(cmd["shoulder_pan"] - goal["shoulder_pan"]) < 1e-9, "never arrived"
     assert i <= math.ceil(0.449 / (1.5 * DT)) + 1, "took longer than the backlog"
+
+
+def test_an_ARM_LESS_tick_does_not_become_slew_BUDGET():
+    """The gap this limiter kept failing on. A tick that commands no arm
+    (`_to` handoffs, `pinch: missed`, `_abort_drop` — the state TRANSITIONS
+    the limiter exists for) leaves `set_arm` holding the last mapping, so the
+    command did not move. Counting that gap as elapsed time hands the next
+    tick `cap * gap` of room: over 0.5 s at the shipped cap that is 1.5 rad,
+    which is no limit at all."""
+    b = _brain(arm_slew_cap=1.5)
+    start = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    _emit(b, dict(start), 0.0)
+    for i in range(1, 26):                     # half a second commanding NO arm
+        _emit(b, None, i * DT)
+    out = _emit(b, {**start, "shoulder_pan": start["shoulder_pan"] + 2.0}, 26 * DT)
+    step = abs(out["shoulder_pan"] - start["shoulder_pan"])
+    assert step <= 1.5 * DT + 1e-9, (
+        f"{step:.3f} rad in one tick ({step / DT:.1f} rad/s) — the arm-less "
+        "ticks were spent as budget")
 
 
 def test_the_slew_limiter_leaves_the_GRIPPER_alone():
@@ -158,3 +185,44 @@ def test_off_by_default_so_the_pacing_ships_on_its_own_measurement():
     # 3.0, not the env's 1.5: the tighter cap costs -1.50 +- 0.60 binned per
     # seed at a 180 s horizon and the 300 s score cannot see it (the param).
     assert np.isclose(TidyMoss().p.arm_rate_cap, 3.0)
+
+
+def test_a_tick_with_NO_ARM_READINGS_does_not_command_the_pose_outright():
+    """`_ramp_from_here` snapshots the achieved pose on a state's first tick.
+    With no readings there is nothing to snapshot, and the old fallback
+    commanded the endpoint OUTRIGHT — an unbounded step input, past the
+    `_paced` call that is the whole point of `arm_rate_cap`. The last command
+    EMITTED is where the driver is still holding the arm, so it is the honest
+    start. `deploy` and `tuck` both ramp through this helper.
+    """
+    b = _brain()
+    here = dict(zip(moss.ARM_JOINTS, moss.GRASP_POSE))
+    b._remember_arm(dict(here), 0.0)           # a tick that DID command the arm
+    target = list(moss.LIFT_POSE)
+    far = max(abs(t - here[j]) for j, t in zip(moss.ARM_JOINTS, target))
+    assert far > 0.5, "pick a target far enough for a step to be visible"
+
+    b._to("tuck", 0.0)
+    out = b._ramp_from_here(target, 0.0, b.p.tuck_ramp_s,
+                            Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=None))
+    step = max(abs(out[j] - here[j]) for j in moss.ARM_JOINTS)
+    assert step <= b.p.arm_rate_cap * DT + 1e-9, (
+        f"{step:.3f} rad in one tick ({step / DT:.1f} rad/s) from a tick with "
+        "no arm readings")
+
+    # …and it still ARRIVES: the ramp is paced, not abandoned.
+    end = b._ramp_from_here(target, 1e3, b.p.tuck_ramp_s,
+                            Senses(t=1e3, odom=(0.0, 0.0, 0.0), speed=0.0, arm=None))
+    for j, v in zip(moss.ARM_JOINTS, target):
+        assert abs(end[j] - v) < 1e-9, f"{j} never reached the target"
+
+
+def test_a_COLD_start_still_has_only_the_endpoint():
+    """No readings AND nothing emitted yet — the first tick of a run. There is
+    no pose to ramp from, and pretending otherwise would invent one."""
+    b = _brain()
+    b._to("tuck", 0.0)
+    out = b._ramp_from_here(list(moss.LIFT_POSE), 0.0, b.p.tuck_ramp_s,
+                            Senses(t=0.0, odom=(0.0, 0.0, 0.0), speed=0.0, arm=None))
+    for j, v in zip(moss.ARM_JOINTS, moss.LIFT_POSE):
+        assert abs(out[j] - v) < 1e-9
