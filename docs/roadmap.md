@@ -18388,3 +18388,66 @@ earlier neither causes nor prevents it, and the longest unbroken contact is
 unmoved. That is the next thing worth a probe: what wedges, where against the
 hull, and whether the rover can feel it (the `stall_mps`/`stall_s` touch
 detector already exists and fires `_room.feel`, but only on a patrol leg).
+
+### The pin is a bottle cap INSIDE the robot, not the rover stuck on something (2026-09-30)
+
+The 4-of-64 failure the bystander dodge could not touch, run down with
+`scripts/probe_moss_pin.py`. It is not a rover-against-obstacle event at all.
+
+**The void.** His collision model tops the `hull` box out at base z 0.100 and
+starts `bin_floor` at 0.1082: an **8.2 mm slot running the whole way under the
+basket, open on every side**. The `v04_*` shell meshes close it to the eye and
+to nothing else — they are `contype 0`. The slot exists only for physics.
+
+**What falls in.** All four pinned seeds are the same signature: `cap0` (the
+2 g bottle cap), touching only `m0/hull`, at base x -0.13..-0.14 and z 0.103
+with a 2 mm standard deviation, RIDING with the rover for 123-207 s of a 300 s
+run, and reported by the head camera on **0 of ~10 000 ticks** because it is
+inside the robot. Peak force **1.5-2.1 N** — this was never a hardware risk,
+and calling it "sustained load on the chassis" (as the previous entry's
+follow-up did) was wrong. The costs are that the object is never collected
+(binned 10/11, not 11/11) and that the contact metric counts a prop trapped
+inside the robot as the rover touching litter, which is what swamped the
+bystander battery's means.
+
+**The mechanism is not a landing from height** — `bin_floor_governs` fixed
+that one for the cigarette butt on 2026-09-28. The cap is ALREADY AT REST on
+the bin floor when a second, heavier prop is released onto it: in seed 31
+`tall0` (30 g) touches it at 0.53 N at t=97.68 and it goes down 9 mm in one
+20 ms tick — **0.47 m/s, far too fast for gravity** — through the 4 mm floor
+and into the slot. Squeezed between a heavy prop above and a thin floor below,
+a 2 g object pops through.
+
+**`seal_bin_void`** (robots/moss.py) adds a zero-mass filler that exactly fills
+the slot, flush under the bin floor and flush on the hull, on the same body so
+it can never collide with either. It removes the TRAP instead of guessing at
+every route in — the butt reached the same slot a different way. His geometry
+is unchanged; rover mass and inertia come out bit-identical. Three tests
+(`tests/test_moss_bin_void.py`) against four planted regressions.
+
+**64 seeds, void open against sealed, same seeds and same brain:**
+
+    PINNED (>60 s contact)      4/64  ->  0/64
+    worst run's contact         207.4 s -> 39.1 s
+    worst unbroken contact      207.0 s ->  7.2 s
+    total props binned          693 -> 694  (of 704)
+    binned @300 s               10 seeds up, 9 down, p = 1.000
+    binned @180 s               -0.12 +- 0.12, p = 0.281 (MDE ~0.34: not
+                                resolvable either way at this sample size)
+
+**Four seeds appeared to lose an object — they did not.** A CHAOS CONTROL
+settled it: the same seal built 0.2 mm taller (physically identical, since
+same-body geoms never collide) puts all four back to 11/11 while keeping the
+four pins fixed. Seed-level binned differences at this magnitude are the
+trajectory reshuffling, not a cost of the change. The flush geometry ships
+because it is the principled one, not because a variant scored better.
+
+**Two traps for the next person, both hit here.** A PYTHONPATH package copy
+moves `__file__`, so `_shipped_policies` stops finding `runs/` and the brain
+falls back SILENTLY to its scripted legs — the first cut of the chaos control
+measured binned 4-7 of 11 and looked like a catastrophic regression. Set
+`MICRODUCK_MOSS_POLICY` and the three `*_APPROACH/STOW/FOLD_POLICY` vars, as
+well as `MICRODUCK_MOSS_DIR` and `MICRODUCK_RL_DIR`, for any such copy. And a
+prop resting just BELOW `BIN_FLOOR_Z` escapes the probes' "delivered, riding
+in the basket" exclusion, so it is counted as litter the rover is touching;
+sealing the void is what makes that unreachable rather than a probe fix.

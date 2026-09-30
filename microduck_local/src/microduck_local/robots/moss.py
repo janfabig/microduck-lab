@@ -598,6 +598,8 @@ FINGER_CONDIM = 4
 FINGER_FRICTION: tuple[float, float, float] = (1.4, 0.15, 0.001)
 HULL_GEOMS: tuple[str, ...] = ("hull", "bin_floor", "bin_x-1", "bin_x1",
                                "bin_y-1", "bin_y1")
+#: Added by `seal_bin_void`, not his: the filler under the bin floor.
+BIN_VOID_GEOM = "bin_void"
 
 # --------------------------------------------------------------- the mass
 #
@@ -1660,6 +1662,65 @@ def bin_floor_governs(spec: mujoco.MjSpec) -> None:
         floor.priority = BIN_FLOOR_PRIORITY
 
 
+#: The VOID under the bin floor, sealed by `seal_bin_void`.
+#:
+#: MEASURED off the collision model (2026-09-30): his `hull` box tops out at
+#: base z 0.100 and his `bin_floor` box starts at 0.1082, so there is an
+#: **8.2 mm slot** running the whole way under the basket, open on every
+#: side. The `v04_*` shell meshes close it visually — they are `contype 0`
+#: and collide with nothing — so it exists only for physics.
+BIN_VOID_Z = (0.100, 0.1082)
+
+
+def seal_bin_void(spec: mujoco.MjSpec) -> None:
+    """Fill the slot between the hull's top and the bin's floor.
+
+    WHAT IT COSTS UNSEALED, measured over 64 moss-yard seeds (2026-09-30):
+    in 4 of them a prop is driven through the 4 mm `bin_floor` and lands in
+    the void, where it RIDES for the rest of the run — 123 to 207 s of a
+    300 s run, pressed on `m0/hull` at 1.5 to 2.1 N. Every case is `cap0`,
+    the 2 g bottle cap; every one sits at base x -0.13..-0.14, z 0.103 with a
+    2 mm standard deviation, which is the slot. The head camera never reports
+    it again (0 ticks of 10 000) because it is inside the robot.
+
+    The mechanism is not a landing from height — `bin_floor_governs` already
+    fixed that one for the cigarette butt. The cap is ALREADY AT REST on the
+    bin floor when a second, heavier prop is released on top of it: in seed
+    31 `tall0` (30 g, 170 mm) touches it at 0.53 N and it goes down 9 mm in
+    one 20 ms tick, 0.47 m/s, far too fast for gravity. Squeezed between a
+    heavy prop above and a 4 mm floor below, a 2 g object pops through.
+
+    Sealing the void is the fix rather than stiffening the floor because it
+    removes the TRAP instead of guessing at every way in — the butt reached
+    the same slot by a different route. The filler exactly matches the bin
+    floor's own footprint and sits directly beneath it, so nothing outside
+    the robot can reach a surface it could not reach before, and it shares
+    the `rover` body with the hull, so the two never collide with each other.
+
+    His geometry is unchanged: this ADDS a geom, it edits none.
+    """
+    try:
+        floor = spec.geom("bin_floor")
+    except Exception:
+        return
+    if floor is None:
+        return
+    lo, hi = BIN_VOID_Z
+    half = (hi - lo) / 2.0
+    body = floor.parent
+    g = body.add_geom()
+    g.name = BIN_VOID_GEOM
+    g.type = mujoco.mjtGeom.mjGEOM_BOX
+    g.size = [float(floor.size[0]), float(floor.size[1]), half]
+    g.pos = [float(floor.pos[0]), float(floor.pos[1]), lo + half]
+    g.group = int(floor.group)
+    g.rgba = [0.2, 0.3, 0.4, 0.0]
+    # Mass would be double-counted against the explicit `<inertial>` the
+    # rover carries (see "the mass" above); it must weigh nothing.
+    g.mass = 0.0
+    g.priority = BIN_FLOOR_PRIORITY
+
+
 def tune_contacts(spec: mujoco.MjSpec) -> None:
     """Let the JAW's contact model govern whatever it grips.
 
@@ -1845,6 +1906,7 @@ def robot_spec(xml: Path | None = None) -> mujoco.MjSpec:
             tracks_as_support(cspec)
             add_arm_camera(cspec)
             bin_floor_governs(cspec)
+            seal_bin_void(cspec)
             return cspec
     spec = load_robot_spec(xml)
     add_planar_base(spec)
@@ -1852,6 +1914,7 @@ def robot_spec(xml: Path | None = None) -> mujoco.MjSpec:
     couple_fingers(spec)
     tune_contacts(spec)
     bin_floor_governs(spec)
+    seal_bin_void(spec)
     drop_base_servo(spec)
     set_base_inertial(spec)
     rewrite_home_key(spec)
@@ -2369,6 +2432,7 @@ __all__ = ["ARM_HOME", "ARM_JOINTS", "ASSETS", "BASE_BODY", "BASE_JOINTS",
            "SHIPPED_BASE_MASS_KG",
            "CACHE_DIR", "CONTRACT_ID", "CONTROL_HZ", "FINGER_JOINTS",
            "REAR_EXTENT_M", "FRONT_EXTENT_M", "HALF_WIDTH_M",
+           "BIN_VOID_GEOM", "BIN_VOID_Z", "seal_bin_void",
            "DEPLOY_STANDOFF_M", "DROP_POSE", "GRASP_HEIGHT_M",
            "GRASP_JAW_CTRL_M", "GRASP_PHYSICS_DT", "GRASP_POSE",
            "GRASP_STANDOFF_M", "LIFT_POSE", "TUCK_POSE",
