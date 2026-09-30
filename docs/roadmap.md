@@ -18507,3 +18507,44 @@ peak force of a jaw pad on the floor: 186 N, on 2292 substeps over 8 seeds
 static loading — the rover is 3.5 kg, so 186 N is ~5x its weight — but the
 count is half what the cap-3.0 run recorded and the force was never recorded
 then. If anything here is worth a probe next, it is that scrape.
+
+### The floor scrape: the learned pickup ploughs its pads on toppled cans (2026-09-30)
+
+The one number the servo re-audit had no baseline for, run down with
+`scripts/probe_moss_scrape.py` (32 seeds x 300 s):
+
+    28 of 32 seeds affected, 129 episodes, ALL of them in `creep`
+    pad-on-floor per run   median 0.56 s   max 3.04 s   (a run is 300 s)
+    slip per run           median   45 mm  max  592 mm
+    peak force / episode   median 33.4 N   p90 58.9 N   max 186.3 N
+    episode length         median 0.12 s   max 1.18 s
+    shoulder_lift at >=90% of its 2.2 N.m clamp: 72% of loaded substeps
+
+**What it is.** The targets are `can0`/`can1`/`can2`/`tall0` — the TALL props —
+at a median height of **30 mm**, where a standing can's body sits at 57.5 mm
+and `tall0`'s at 85 mm. They have been knocked over. Toppled, they read as low
+objects, the jaws are taken down to their height, and `creep` drives the base
+in with the pads already on the floor. Seed 4's whole 2.27 s is ONE incident
+between t=102.9 and t=110.8 on a toppled `can0`, 236 mm of slip, with
+`shoulder_lift` pinned at its clamp for 91-97% of it.
+
+**`creep` is the LEARNED pickup**, driving base and arm together, so this is
+not a scripted pose to retune — the policy chose it, and nothing in
+`robots/moss_env.py` costs it a floor contact.
+
+**Severity: real, common, and not the thing to fix first.** The median episode
+is 0.12 s at 33 N, and although the shoulder is at its clamp through them, the
+scrape accounts for at most **8% of that joint's total saturation** (median
+0.45 s of a median 5.48 s per run, measured seed by seed). The 186 N is a
+single substep. What it actually costs on hardware is pad abrasion — a median
+45 mm of loaded slip per five-minute run, worst 592 mm — and occasional shock
+through the wrist.
+
+**Two ways out, neither measured.** (a) A floor-contact penalty in the pick
+env and a retrain — principled, expensive, and it has to not cost the grasp on
+genuinely flat litter (`card0` 4 mm, `butt0` 8 mm). (b) A z-floor clamped onto
+the policy's commanded gripper pose during `creep`, the way `hold_jaw` already
+guards its jaw command — cheap and testable without retraining, but it must
+still admit a 33 mm toppled can, so the margin is small. Score either on
+`probe_moss_scrape.py` (slip per run is the abrasion measure) with binned at
+180 s and 300 s as the mission cost.
