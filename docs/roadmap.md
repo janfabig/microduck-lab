@@ -18451,3 +18451,59 @@ well as `MICRODUCK_MOSS_DIR` and `MICRODUCK_RL_DIR`, for any such copy. And a
 prop resting just BELOW `BIN_FLOOR_Z` escapes the probes' "delivered, riding
 in the basket" exclusion, so it is counted as litter the rover is touching;
 sealing the void is what makes that unreachable rather than a probe fix.
+
+### Servo audit re-run against the current code: no regression (2026-09-30)
+
+`arm_rate_cap` was measured on 2026-09-29 and three things have moved the
+trajectories since — the bystander dodge, the void seal, and the `min_x` split
+(a no-op). `scripts/probe_moss_safety.py` re-run on the same 8 seeds at both
+horizons, against the numbers that entry recorded:
+
+| 180 s | then (cap 3.0) | now |
+|---|---|---|
+| binned of 88 | 70 | 66 — see below, it is noise |
+| worst one-tick command step | 0.281 rad | 0.762 — see below, it is benign |
+| peak joint speed | 6.64 rad/s | 5.58 |
+| longest unbroken arm stall | 1.57 s | 1.53 |
+| arm-on-bin contact | 234 substeps, 127 N | **0 substeps, 0 N** |
+| visible arm inside the rover | 0.0 mm | 0.0 mm |
+| pads on the floor | 4603 substeps | **2292** |
+
+At 300 s: binned 88/88 both, longest stall 1.57 → 1.76 s, arm-on-bin 1766 →
+**1133** substeps at 127 → 126.5 N, worst visible clip −2.4 → **0.0 mm**.
+
+**The 66-of-88 is the 8-seed instrument, not a cost.** The same comparison over
+**64 paired seeds** — `ctl` (dodge off, void open: the code the 70 was measured
+on) against the current tree — is **519 → 520 at 180 s** (p = 1.000, 21 up 22
+down) and **688 → 694 at 300 s**. Flat to slightly better. The safety probe's
+8 seeds carry a paired SE of ~0.26/seed on that column and cannot resolve it.
+
+**The 0.762 rad step RELEASES a saturated servo; it does not cause one.** Every
+big step is on the FIRST TICK of `lift` or `tuck` (`since = 0.020`), which is
+`ramp_from_achieved` doing its job: it re-bases the ramp onto where the arm
+actually is, so the command jumps by the servo's tracking LAG — toward the
+joint, not away from it. Traced at 2 ms through seed 6's 0.762 rad step on
+`shoulder_lift`: torque was pinned at the **2.200 N·m clamp for the whole
+0.3 s before** it and averages **0.765 N·m after**. `max_cmd_step` cannot tell
+a step that demands motion from one that cancels error — read it beside the
+torque or it reports a safety feature as a hazard. (`ramp_from_achieved`'s own
+note already measured this lag at 0.38 rad p95 and 0.60 rad worst over 63
+handovers, so 0.762 is the same distribution, not a new behaviour; the
+recorded 0.281 was simply the max over the 8 seeds drawn that day.)
+
+**The finger servo is the highest-duty joint by 3x, and it is fine.** Mean duty
+0.25–0.29 at 180 s and 0.20–0.24 at 300 s, consistent across all 8 seeds
+against the probe's "well under 0.3" note, with the jaw within 2° of its stop
+for 35–40% of the run. Broken down by state (seed 0, 300 s) it is all carrying
+and gripping: `stow` 0.649, `lift` 0.610, `creep` 0.290 (5.8 s saturated),
+`pinch` 0.131 — and **0.000 in `search`, `approach`, `deploy` and `tuck`**,
+which together are 51% of the run. It is not clenched on nothing; the run
+average is a ~30% duty cycle of holding an object, which is what a gripper
+does.
+
+**Nothing found. The one number with no baseline to compare against** is the
+peak force of a jaw pad on the floor: 186 N, on 2292 substeps over 8 seeds
+(0.57 s per seed, 90% of it while driving). It is a brief impact rather than
+static loading — the rover is 3.5 kg, so 186 N is ~5x its weight — but the
+count is half what the cap-3.0 run recorded and the force was never recorded
+then. If anything here is worth a probe next, it is that scrape.
