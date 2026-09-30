@@ -439,6 +439,57 @@ class TidyMossParams:
     #: same cap the fold obeys, so nothing about this is fast.
     drop_tuck_rate: float = 0.75
     drop_tuck_max_s: float = 6.0
+    #: BACK OFF AFTER A DROP so the thing it dropped can be SEEN again, m.
+    #:
+    #: What a drop leaves behind, MEASURED over four 300 s moss-yard seeds
+    #: (2026-09-29): **20 drops, one about every 60 s**, and every one lands
+    #: directly ahead — base-frame x from 0.001 to 0.479 m, median 0.293, never
+    #: more than 0.27 m off the centre line. That is the problem, because
+    #: `min_x` (0.30 m) drops any detection nearer than itself: it exists to
+    #: reject the robot's own bin and things under the chassis, and it cannot
+    #: tell those from litter the robot has just put there. **11 of the 20 —
+    #: 55% — land inside that gate**, so the brain does not merely
+    #: deprioritise the object it dropped, it cannot see it at all. It then
+    #: searches, drives forward, and the tracks are what finds it.
+    #:
+    #: Reversing is the cheapest fix because the gate is a RANGE test: the
+    #: object does not have to move, the robot does. Clearing `min_x` + 5 cm
+    #: needs a median of 0.112 m and at worst 0.349 m; 0.18 m covers the median
+    #: and most of the spread without a long blind reverse.
+    #:
+    #: **OFF, and it is a measured NO.** Eight paired 300 s seeds, back-off at
+    #: 0.18 m against none (2026-09-29): binned 88 -> 87 (-0.12 +- 0.12),
+    #: drops 39 -> 49, and the thing it was built for — run-overs — 16 -> 25
+    #: at +1.12 +- 2.52, which is an instrument that cannot resolve the change
+    #: rather than an improvement. More drops is the mechanism working as
+    #: designed (the robot gets another go instead of abandoning) and it buys
+    #: nothing, because of the measurement below.
+    #:
+    #: **WHY IT CANNOT WORK: 13 of 16 run-overs are on objects the robot had
+    #: NOT just dropped** (8 seeds; the 3 that follow a drop do so a median
+    #: 18 s later). The robot mostly drives into litter it never picked up —
+    #: it approached, the object passed inside `min_x`, and from there the
+    #: brain is blind to it. Backing off after a DROP addresses a fifth of the
+    #: problem at best, and this is the whole reason the number above is 0:
+    #: the story "it drops it, then runs it over" is intuitive, was mine as
+    #: well as the reporter's, and the drop-to-run-over link is not there.
+    #:
+    #: 0 = off (the old behaviour: fold, then search straight over it).
+    drop_back_m: float = 0.0
+    #: Gently — this is a blind move. `approach_mps` is 0.30.
+    drop_back_mps: float = 0.12
+    #: ...and only if the MAP says the space behind is clear, within this
+    #: radius of the point the back bumper would reach. The rover's half width
+    #: is 0.212 m (`moss.REAR_EXTENT_M`'s note), so this covers it. MOSS's
+    #: scanner looks FORWARD: reversing is blind, and `RoomMap.blocked` — which
+    #: counts both mapped cells and `felt` bumps, so a wall it has only ever
+    #: touched still stops it — is the only thing that knows. UNKNOWN reads as
+    #: clear, because the map is sparse early on; that is exactly why the
+    #: reverse is bounded by `drop_back_m` instead of trusting the map alone.
+    drop_back_clear_m: float = 0.25
+    #: A reverse that has not covered its distance by now gives up and looks
+    #: from where it is (a stall against something the map never had).
+    drop_back_max_s: float = 5.0
     #: How long the grip has to read EMPTY before believing it. The pads lose
     #: and regain contact during the swing, so a single tick means nothing;
     #: `_gripped` is already debounced and this is on top of it.
@@ -1067,6 +1118,12 @@ class TidyMoss:
         #: (`_wrist_floor_band`) — the map must not draw reach the sensor
         #: hasn't got.
         self._wcam: tuple[float, float, float, float, float] | None = None
+        #: Odometry when a `back_off` began — `drop_back_m` is measured from it.
+        self._back_from: tuple[float, float] | None = None
+        #: Something was dropped and the tuck that follows owes a back-off.
+        #: A LATCH rather than a branch, because `_dropped` is consumed by the
+        #: fold it selects and there are four ways out of `tuck`.
+        self._back_due: bool = False
         #: The last arm command this brain actually EMITTED, and when
         #: (`_remember_arm`). Kept unconditionally — `_slew` is off by
         #: default and `_ramp_from_here` needs the same answer.
@@ -1666,6 +1723,7 @@ class TidyMoss:
                 self._give_up(t)
             self._to("tuck", t)
             self._dropped = self.p.missed_pick_straight
+            self._back_due = True
             return None, "pinch: missed"
         if ph == "rise":
             a = dt / self._paced(p.pinch_move_s, pc["grasp_pose"], pc["rise_pose"])
@@ -1683,6 +1741,7 @@ class TidyMoss:
                 self._give_up(t)
             self._to("tuck", t)
             self._dropped = self.p.missed_pick_straight
+            self._back_due = True
             return None, "pinch: dropped it rising"
         return None, "pinch"
 
@@ -2191,9 +2250,43 @@ class TidyMoss:
             self._give_up(t)
         self._to("tuck", t)
         self._dropped = bool(direct)
+        self._back_due = True          # whichever fold runs, back off after it
         self._drop_from = None
         return Intent(twist=(0.0, 0.0, 0.0), arm=None,
                       note=f"{where}: dropped it — going back for it")
+
+    def _after_tuck(self, t: float) -> None:
+        """Tuck is finished: BACK OFF if something was just dropped, else look.
+
+        Read here rather than in one fold's branch because there are four ways
+        out of `tuck` — home by a clear route, the short route, the learned
+        fold and the scripted fold — and a drop's tuck does not reliably take
+        the one you would expect. MEASURED: the first cut hooked only the
+        straight-home branch, and the eight-seed A/B came back BYTE-IDENTICAL
+        (run-overs 16 -> 16, drops inside the gate 18 -> 18) because with
+        `plan_routes` on the drop's tuck takes the ROUTE branch, which clears
+        the flag on its way to `search`. A dead hook and a working one look
+        the same in the diff and different only in the numbers.
+        """
+        due, self._back_due = self._back_due, False
+        self._to("back_off" if due and self.p.drop_back_m > 0.0 else "search", t)
+
+    def _rear_blocked(self, gap_m: float) -> bool:
+        """Is anything solid behind the back bumper, as far as the MAP knows?
+
+        MOSS's depth camera looks FORWARD, so a reverse is blind and this is
+        the only check there is. `RoomMap.blocked` counts mapped cells AND
+        `felt` bumps, so a wall the robot has only ever run into still stops
+        it. An UNMAPPED rear reads clear — early in a run most of the room is —
+        which is why the caller also bounds the move.
+        """
+        if self._room is None or self._odom is None:
+            return False
+        x, y, yaw = self._odom
+        d = moss.REAR_EXTENT_M + max(0.0, float(gap_m))
+        return bool(self._room.blocked(x - math.cos(yaw) * d,
+                                       y - math.sin(yaw) * d,
+                                       self.p.drop_back_clear_m))
 
     def _rest(self) -> tuple[float, ...]:
         """Where the arm waits: `rest_pose`, or the old tuck without one."""
@@ -2445,6 +2538,7 @@ class TidyMoss:
                     self._give_up(t)
                 self._to("tuck", t)
                 self._dropped = self.p.missed_pick_straight
+                self._back_due = True
             elif (self._gripped(senses) and self._grip_held_for(senses)
                   and self._grip_is_a_grasp(senses)
                   and self._grip_is_deep(senses)
@@ -2485,6 +2579,7 @@ class TidyMoss:
                     note = "gave up on this one"
                 self._to("tuck", t)
                 self._dropped = self.p.missed_pick_straight
+                self._back_due = True
             else:
                 x, y = fix
                 self._target_world = self._world((x, y)) or self._target_world
@@ -2700,7 +2795,37 @@ class TidyMoss:
                 self._drop_from = None
                 self._route = None
                 self._policy_cmd = None
+                self._after_tuck(t)
+
+        elif self.state == "back_off":
+            # THE THING IT JUST DROPPED IS IN FRONT AND TOO CLOSE TO SEE.
+            # `drop_back_m` has the measurement; the short version is that a
+            # drop lands a median 0.293 m ahead and `min_x` blinds the brain to
+            # anything nearer than 0.30, so 55% of drops become invisible and
+            # the robot drives over what it just put down. Reversing restores
+            # the RANGE the detector needs, and the object is then the nearest
+            # thing in front — no re-prioritising needed, the ordinary search
+            # picks it up first.
+            if self._back_from is None and self._odom is not None:
+                self._back_from = (self._odom[0], self._odom[1])
+            gone = (0.0 if self._back_from is None or self._odom is None else
+                    math.hypot(self._odom[0] - self._back_from[0],
+                               self._odom[1] - self._back_from[1]))
+            left = p.drop_back_m - gone
+            wall = self._rear_blocked(left)
+            # The arm is already folded (this state is entered from the drop's
+            # tuck); hold it there on the pacing every other leg uses.
+            arm = self._ramp_from_here(self._rest(), since, p.tuck_ramp_s, senses)
+            if wall or left <= 0.0 or since >= p.drop_back_max_s:
+                self._back_from = None
+                note = ("back off: something solid behind — looking from here"
+                        if wall else f"back off: {gone:.2f} m, looking again")
+                twist = (0.0, 0.0, 0.0)
                 self._to("search", t)
+            else:
+                twist = (-p.drop_back_mps, 0.0, 0.0)
+                note = (f"back off: {gone:.2f}/{p.drop_back_m:.2f} m so it can "
+                        "be seen again")
 
         elif self.state == "tuck" and self._dropped:
             # STRAIGHT HOME after a drop, at the commanded joint rate, from
@@ -2727,7 +2852,7 @@ class TidyMoss:
             if self._folded(senses) or since >= p.drop_tuck_max_s:
                 self._dropped = False
                 self._drop_from = None
-                self._to("search", t)
+                self._after_tuck(t)
 
         elif self.state == "tuck" and self._fold_route(senses) is not None:
             # THE SHORT ROUTE (see `fold_route`): release pose -> waypoint ->
@@ -2754,7 +2879,7 @@ class TidyMoss:
             note = "tuck: folding home by the short route"
             if self._folded(senses) or since >= p.fold_policy_s:
                 self._route = None
-                self._to("search", t)
+                self._after_tuck(t)
 
         elif self.state == "tuck" and "fold" in self._sessions:
             # THE LEARNED FOLD. Seeded the way its env starts a fold: command
@@ -2791,7 +2916,7 @@ class TidyMoss:
             note = "tuck: learned fold"
             if self._folded(senses) or since >= p.fold_policy_s:
                 self._policy_cmd = None
-                self._to("search", t)
+                self._after_tuck(t)
 
         elif self.state == "tuck":
             # VIA THE WAYPOINT. Folding straight to the tuck pose jams the arm
@@ -2814,7 +2939,7 @@ class TidyMoss:
             note = ("tuck: swinging clear of the bin" if since < _half
                     else "tuck: folding the arm home")
             if since >= p.tuck_s:
-                self._to("search", t)
+                self._after_tuck(t)
 
         # The PREVIOUS values update LAST, after the observation has used
         # them. Updating them at the top — which this did for one run — makes

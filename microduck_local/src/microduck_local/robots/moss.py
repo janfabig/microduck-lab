@@ -98,6 +98,16 @@ MOSS_LICENCE = ("CC BY 4.0 (MOSS rover geometry, Laurent Genoud / Show "
 RAW_BASE = ("https://raw.githubusercontent.com/metrox-eth/moss-jev/"
             f"{MOSS_JEV_SHA}/live/model")
 
+#: HOW FAR THE ROVER STICKS OUT BEHIND ITS OWN ORIGIN, m. MEASURED off the
+#: MJCF (2026-09-29): the true AABB corners of every hull, bin and track geom,
+#: arm excluded, in the base frame — x from -0.231 to +0.186, y +-0.212. The
+#: BIN is what makes it 0.231 rather than the hull's 0.179: it overhangs the
+#: back. Needed by anything that reverses, because MOSS's scanner looks
+#: FORWARD and the rear is checked against the map rather than seen.
+#: (`geom_rbound` reads 0.320 here — a bounding SPHERE around a long track is
+#: not a rear extent.)
+REAR_EXTENT_M = 0.231
+
 #: Where `fetch()` puts them. `MICRODUCK_MOSS_DIR` moves the cache, the way
 #: `MICRODUCK_MARS_DIR` and `MICRODUCK_G1_DIR` do, so a scratch checkout can
 #: verify without touching the main one's download.
@@ -2349,6 +2359,7 @@ __all__ = ["ARM_HOME", "ARM_JOINTS", "ASSETS", "BASE_BODY", "BASE_JOINTS",
            "EQUIPPED_BASE_MASS_KG",
            "SHIPPED_BASE_MASS_KG",
            "CACHE_DIR", "CONTRACT_ID", "CONTROL_HZ", "FINGER_JOINTS",
+           "REAR_EXTENT_M",
            "DEPLOY_STANDOFF_M", "DROP_POSE", "GRASP_HEIGHT_M",
            "GRASP_JAW_CTRL_M", "GRASP_PHYSICS_DT", "GRASP_POSE",
            "GRASP_STANDOFF_M", "LIFT_POSE", "TUCK_POSE",

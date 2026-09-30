@@ -1,82 +1,111 @@
-"""Find a release pose the arm can REACH from the lift, carrying a can.
+"""Where does MOSS put what it drops, and does it then drive over it?
 
-    uv run python scripts/probe_moss_drop.py
+    uv run python scripts/probe_moss_drop.py 300 0,1,2,3 out.json
+    PARAMS="drop_back_m=0.18" uv run python scripts/probe_moss_drop.py ...
 
-`moss.DROP_POSE` was chosen as a point over the bin that is reachable and
-contact-free — checked as a POSE. Approached from `LIFT_POSE` with a can in
-the jaws it is none of those things: `shoulder_lift` stalls 0.379 rad short
-against `bin_x1`, the bin's own front wall, and the can is let go 8.5 cm high
-and 7 cm forward of where the pose says, bounces off the near rim and ends on
-the floor. 0 of 10 deliveries. Same mistake as the tuck, which also jams: a
-pose validated on its own rather than along the path that has to reach it.
+A DROP: a prop that was carried comes back to the floor outside the bin — its
+position is recorded in the BASE frame, which is what `min_x` filters on. A
+RUN-OVER: the base's own footprint passes over a prop while the tracks drive.
 
-So the test here is the whole delivery — ramp from the lift, open, settle,
-and ask whether the can is IN THE BIN.
+MEASURED with it (2026-09-29, 8 seeds): drops land a median 0.293 m directly
+ahead and 55% fall inside `min_x`, where the brain cannot see them at all —
+but 13 of 16 run-overs are on objects that were NEVER picked up. See
+docs/roadmap.md. The run-over count is 0-10 per seed with a paired standard
+error of +-2.5, so it CANNOT resolve an intervention at this sample size; use
+`probe_moss_shove.py`'s contact seconds for that.
 """
+import json
+import sys
+from pathlib import Path
+
 import numpy as np
-import mujoco
 
 from microduck_local.robots import moss
-from microduck_local.robots.moss_env import MossStowEnv
+from microduck_local.viz_server import load_policy_infer
+from microduck_local.world import scenario as S
+from microduck_local.world_server import WorldState
 
-RAMP_S = 3.0
-SETTLE_S = 1.5
+SECONDS = float(sys.argv[1])
+seeds = [int(x) for x in sys.argv[2].split(",")]
+sc0 = S.Scenario.from_dict(json.loads(Path("scenarios/moss-yard.json").read_text()))
+# The rover's own plan-view half-extents, base frame (hull + tracks).
+HALF_X, HALF_Y = 0.16, 0.13
+DRIVING = 0.03           # m/s of base speed above which a pass is under power
 
-
-def main() -> None:
-    env = MossStowEnv(stow_rung=0)
-    lo = np.array([env.model.joint(j).range[0] for j in moss.ARM_JOINTS])
-    hi = np.array([env.model.joint(j).range[1] for j in moss.ARM_JOINTS])
-
-    def deliver(pose, seed):
-        env.reset(seed=seed)
-        if not env._gripped_now():
-            return None
-        start = np.array([env.arm_cmd[j] for j in moss.ARM_JOINTS], float)
-        goal = np.asarray(pose, float)
-        n = int(RAMP_S / moss.GRASP_PHYSICS_DT)
-        for k in range(n):
-            f = (k + 1) / n
-            env.arm_cmd.update(
-                zip(moss.ARM_JOINTS, start + f * (goal - start)))
-            env.driver.set_arm(env.arm_cmd)
-            env.driver.step(env.data)
-            mujoco.mj_step(env.model, env.data)
-        held = env._gripped_now()
-        err = max(abs(float(env.data.qpos[env.model.joint(j).qposadr[0]]) - v)
-                  for j, v in zip(moss.ARM_JOINTS, pose))
-        env.arm_cmd[moss.GRIPPER_JOINT] = 0.041
-        env.driver.set_arm(env.arm_cmd)
-        for _ in range(int(SETTLE_S / moss.GRASP_PHYSICS_DT)):
-            env.driver.step(env.data)
-            mujoco.mj_step(env.model, env.data)
-        return env._in_bin(), held, err
-
-    rng = np.random.default_rng(0)
-    base = np.asarray(moss.DROP_POSE, float)
-    print(f"{'candidate':>10}{'reach err':>11}{'held':>7}{'in bin':>8}")
-    best = []
-    for i in range(60):
-        # Search AROUND the documented drop, widening as it goes.
-        scale = 0.15 + 0.45 * (i / 60)
-        pose = np.clip(base + rng.normal(0.0, scale, 5), lo, hi)
-        got = deliver(pose, 0)
-        if got is None:
-            continue
-        in_bin, held, err = got
-        if in_bin or (held and err < 0.08):
-            print(f"{i:>10}{err:>11.3f}{str(held):>7}{str(in_bin):>8}")
-        if in_bin:
-            best.append((err, pose))
-    if not best:
-        print("\nno candidate delivered the can -- widen or rethink")
-        return
-    best.sort(key=lambda t: t[0])
-    err, pose = best[0]
-    print(f"\nbest: {tuple(np.round(pose, 4).tolist())}  (reach err {err:.3f})")
-    ok = sum(1 for s in range(8) if (deliver(pose, s) or (False,))[0])
-    print(f"  repeat over 8 seeds: {ok}/8 landed in the bin")
-
-
-if __name__ == "__main__":
-    main()
+out = []
+for seed in seeds:
+    st = WorldState(load_infer=load_policy_infer)
+    st.world, st.scenario = st.build(sc0, seed=seed), sc0
+    st.set_brain("m0", "tidy_moss")
+    import dataclasses
+    import os
+    spec = os.environ.get("PARAMS", "")
+    if spec.strip():
+        br0 = st.brains["m0"]
+        want = {}
+        for part in spec.split(","):
+            k, _, v = part.partition("=")
+            cur = getattr(br0.p, k.strip())
+            want[k.strip()] = type(cur)(v)
+        br0.p = dataclasses.replace(br0.p, **want)
+        for k, v in want.items():
+            assert getattr(br0.p, k) == v, f"override of {k} did not take"
+    w = st.world
+    m, d = w.model, w.data
+    br = st.brains["m0"]
+    pid = {p.id: m.body(p.id).id for p in sc0.props}
+    carried = {k: False for k in pid}
+    drops, overs, over_ids = [], [], set()
+    prev = None
+    for k in range(int(SECONDS / 0.02)):
+        st.drive(np.zeros(3), "auto")
+        w.step()
+        x, y, yaw = w.ducks["m0"].driver.pose(d)
+        spd = 0.0 if prev is None else np.hypot(x - prev[0], y - prev[1]) / 0.02
+        prev = (x, y)
+        c, s_ = np.cos(-yaw), np.sin(-yaw)
+        for name, b in pid.items():
+            q = d.xpos[b]
+            dx, dy = q[0] - x, q[1] - y
+            bx, by = dx * c - dy * s_, dx * s_ + dy * c
+            inbin = (moss.BIN_INTERIOR_X[0] < bx < moss.BIN_INTERIOR_X[1]
+                     and moss.BIN_INTERIOR_Y[0] < by < moss.BIN_INTERIOR_Y[1]
+                     and q[2] > moss.BIN_FLOOR_Z)
+            up = q[2] > 0.06 and not inbin
+            if carried[name] and not up and not inbin:
+                drops.append((round(k * 0.02, 1), name, round(float(bx), 3),
+                              round(float(by), 3), str(br.state)))
+            carried[name] = up
+            # under the rover, on the floor, while it is moving
+            if (not inbin and q[2] < 0.12 and abs(bx) < HALF_X and abs(by) < HALF_Y
+                    and spd > DRIVING):
+                overs.append((round(k * 0.02, 1), name, round(float(bx), 3),
+                              round(float(by), 3), str(br.state)))
+                over_ids.add(name)
+    # collapse run-overs into episodes (same prop, within 1 s)
+    eps, last = [], {}
+    for t_, name, bx, by, stt in overs:
+        if name not in last or t_ - last[name] > 1.0:
+            eps.append((t_, name, bx, by, stt))
+        last[name] = t_
+    print(f"\nseed {seed}: {len(drops)} drops, {len(eps)} run-over episodes "
+          f"on {len(over_ids)} distinct props")
+    for e in drops[:8]:
+        print(f"    drop  {e[0]:6.1f}s {e[1]:8s} base ({e[2]:+.3f},{e[3]:+.3f})  in {e[4]}")
+    for e in eps[:8]:
+        print(f"    OVER  {e[0]:6.1f}s {e[1]:8s} base ({e[2]:+.3f},{e[3]:+.3f})  in {e[4]}")
+    x, y, yaw = w.ducks["m0"].driver.pose(d)
+    c, s_ = np.cos(-yaw), np.sin(-yaw)
+    binned = 0
+    for p_ in sc0.props:
+        q = d.xpos[pid[p_.id]]
+        dx, dy = q[0]-x, q[1]-y
+        bx, by = dx*c - dy*s_, dx*s_ + dy*c
+        if (moss.BIN_INTERIOR_X[0] < bx < moss.BIN_INTERIOR_X[1]
+                and moss.BIN_INTERIOR_Y[0] < by < moss.BIN_INTERIOR_Y[1]
+                and q[2] > moss.BIN_FLOOR_Z):
+            binned += 1
+    print(f"    binned {binned}/{len(sc0.props)}")
+    out.append({"seed": seed, "drops": drops, "overs": eps, "binned": binned,
+                "props": len(sc0.props)})
+Path(sys.argv[3]).write_text(json.dumps(out, indent=1)) if len(sys.argv) > 3 else None

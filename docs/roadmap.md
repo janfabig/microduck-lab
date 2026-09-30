@@ -18004,3 +18004,66 @@ these servos needs the STS3215's stall torque and no-load speed measured, which
 is his to give. Every number above is "how hard the sim's arm pushed on the
 sim's clamp" — the right question before a first real run, and no substitute
 for it.
+
+### "It drops something and then runs it over" — the drop is not the cause (2026-09-29)
+
+Reported from `/sim`: MOSS puts an object down in front of itself, cannot see
+it, and drives over it; the suggested fix was to reverse a little after a drop,
+checking the map first so it does not back into a wall, and then re-target the
+object. The first half of that is exactly right and the second half does not
+follow, and only measuring separated them.
+
+**What a drop leaves behind** (four 300 s `moss-yard` seeds,
+`scripts/probe_moss_drop.py`): **20 drops, one about every 60 s**, and every
+single one lands directly ahead — base-frame x from 0.001 to 0.479 m, median
+0.293, never more than 0.27 m off the centre line. So the observation about
+WHERE things land is confirmed exactly.
+
+**And the brain really is blind to them.** `min_x` (0.30 m) rejects any
+detection nearer than itself. It exists to reject two real bugs — the robot's
+own bin reads as a can, and things under the chassis — but it cannot tell those
+from litter the robot has just put down. **11 of the 20 drops, 55%, land inside
+that gate.** The brain does not deprioritise what it dropped; it cannot see it.
+
+**But the drop is not what gets run over.** Counting the base's own footprint
+passing over a prop while the tracks are driving, over eight seeds: **13 of 16
+run-overs are on an object the robot had NOT just dropped** (the 3 that follow
+a drop do so a median 18 s later). The robot mostly drives into litter it never
+picked up — it approached, the object passed inside `min_x`, and from there it
+is invisible. "It drops it, then runs it over" is intuitive, was the reviewer's
+story and mine, and the link is not in the data.
+
+**Two fixes tried, both measured, neither shipped** (8 paired seeds each):
+
+| | binned | run-overs | drops |
+|---|---|---|---|
+| back off 0.18 m after a drop | 88 → 87 (−0.12 ± 0.12) | 16 → 25 (+1.12 ± 2.52) | 39 → 49 |
+| `min_x` 0.30 → 0.20 | 88 → 87 (−0.12 ± 0.12) | 16 → 18 (+0.25 ± 2.62) | **39 → 92 (+6.62 ± 2.15)** |
+
+The back-off is implemented and kept at `drop_back_m = 0.0`
+(`TidyMoss.back_off`, with `_rear_blocked` checking `RoomMap.blocked` against
+mapped cells and `felt` bumps, since MOSS's scanner looks FORWARD and a reverse
+is blind). Widening `min_x` more than DOUBLES drops — the robot targets things
+it is already on top of and grasps them at geometry that does not work.
+
+**The real blocker is the instrument, and that is the next step.** Run-overs
+are 0–10 discrete episodes per seed and the paired standard error is ±2.5 on a
+mean of 2: this benchmark cannot resolve either intervention, so both "nulls"
+above are unresolvable rather than flat (the soccer lesson, again). A
+continuous measure exists and is far cheaper per event — SECONDS OF HULL-AND-
+TRACK CONTACT with loose litter, sampled every 2 ms: 7.0 s and 16.0 s on the
+two seeds measured, peaking at **26.3 N** against an 18 g can, and landing in
+`approach`, `creep` and `deploy` — i.e. while driving at a target, which is the
+damage the report is actually about. Re-run both interventions against that
+before trying a third.
+
+**A caution recorded with it.** The first cut of the back-off hooked the one
+tuck branch that a drop does not take: with `plan_routes` on the fold goes home
+by a ROUTE, which clears the drop flag on its way to `search`. The eight-seed
+A/B came back BYTE-IDENTICAL — same run-overs, same drops, same binned — which
+is what a dead hook looks like, and it is indistinguishable from "the fix does
+nothing" unless you notice that *nothing at all* moved. There are four ways out
+of `tuck`; the flag is now read in one place (`_after_tuck`) for that reason.
+And the first contact probe counted 3.7M contact-substeps in a run that has
+150k, because it left the BIN in the rover's geoms and every delivered object
+resting in the basket counted as the rover touching litter.
