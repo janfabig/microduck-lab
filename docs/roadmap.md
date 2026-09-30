@@ -18182,3 +18182,42 @@ Measure it with `probe_moss_shove.py` (contact seconds AND longest unbroken
 contact — the second column is what caught the trapped cap) and check
 `probe_moss_whom.py` afterwards: if the bystander share does not fall, the
 change did not do what it claims.
+
+### The colour camera DOES see the close litter; the brain bins the detection (2026-09-29)
+
+Asked on /sim: "maybe the depth camera doesn't work close by, but it's still a
+camera — I see things tagged in the head camera frame. Are we detecting that,
+or are we throwing everything out because we have no depth?" Throwing it out,
+and depth was never involved.
+
+`scripts/probe_moss_dropped_dets.py` records every `cls == "toy"` detection and
+which of `_toys_in_view`'s three filters discarded it, over 300 s seeds:
+
+    seed 0   12705 detections   kept 89.1%   min_x 10.9%   bearing 0%   own_bin 0%
+    seed 1   13997              kept 86.7%   min_x 13.3%   bearing 0%   own_bin 0%
+    seed 2   11984              kept 92.4%   min_x  7.6%   bearing 0%   own_bin 0%
+
+**About one detection in ten is a real object in front, discarded.** The
+min_x-rejected ones sit at x = 0.187–0.300 m, median ~0.26, and **100% of them
+are AHEAD of the front bumper (0.186 m)** — not one is the chassis or the bin.
+The filter's own comment says "under the robot, or behind", and the bin case has
+its own separate test on the next line which fired **zero** times in every run.
+So `min_x` is not doing the job it was written for: it is discarding roughly
+1000–1900 sightings of litter directly in front, per five minutes.
+
+**Depth is not in this path at all.** `range_from_detector` has been on since
+the detector began ranging each prop by its own size, so these ranges come from
+apparent width in the COLOUR image. The depth row at 7.5 cm builds the obstacle
+map and never touches the detections.
+
+**And the filter is upstream of BOTH consumers.** `_toys_in_view` feeds
+targeting (`_see`) and the object MEMORY (`_remember`) from the same list, so a
+close object is not merely "not targeted" — it is never remembered, which is
+why the memory cannot help the drive path avoid it.
+
+**This is a different change from the `min_x` A/B already recorded.** That one
+lowered the gate to 0.20 and let the brain TARGET things at 0.20–0.30 m, which
+doubled drops (it grabs at a range the jaws cannot work). The change this
+measurement supports is to split the filter: keep close detections for MEMORY
+and avoidance, exclude them only from TARGET SELECTION. Untested — and the
+bystander finding above says that is where the 95% lives.
