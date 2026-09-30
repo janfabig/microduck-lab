@@ -18014,7 +18014,7 @@ object. The first half of that is exactly right and the second half does not
 follow, and only measuring separated them.
 
 **What a drop leaves behind** (four 300 s `moss-yard` seeds,
-`scripts/probe_moss_drop.py`): **20 drops, one about every 60 s**, and every
+`scripts/probe_moss_runover.py`): **20 drops, one about every 60 s**, and every
 single one lands directly ahead — base-frame x from 0.001 to 0.479 m, median
 0.293, never more than 0.27 m off the centre line. So the observation about
 WHERE things land is confirmed exactly.
