@@ -18141,3 +18141,44 @@ on seed 0, against 5.5 s over the whole 300 s in the working checkout — not a
 contradiction and not a regression, just a different robot. A `git archive`
 extraction is the right place to prove imports resolve and the wrong place to
 re-measure behaviour; re-run these in a checkout that has the policy.
+
+### It hits what it is NOT going for — 95% bystanders (2026-09-29)
+
+The previous entry closed by suggesting the fix was to refuse targets the jaws
+cannot handle — don't commit to a 2 g cap, and you never drive at it. Asked
+"how can it refuse something it cannot see?", which is a fair reading of a
+30 cm blind spot, the answer is that the refusal would happen at RANGE, while
+the object is still visible, not at contact. But the suggestion is wrong for a
+better reason, and one measurement kills it.
+
+`scripts/probe_moss_whom.py` classifies every rover-on-litter contact by
+whether the touched prop is the one the brain is acting on. Three 300 s seeds:
+
+    seed 0   target  2%   bystander  95%
+    seed 1   target  9%   bystander  91%
+    seed 2   target  0%   bystander 100%
+
+**It shoulders things it is not going for.** Choosing targets better would
+address 2–9% of the contact. The problem is the PATH, not the choice.
+
+**And it cannot currently know.** Two separate blind spots, and the litter
+falls through both:
+
+* the OBSTACLE MAP (`RoomMap`, what `_rear_blocked` and the patrol waypoints
+  consult) is built from one row of RealSense depth at 7.5 cm — walls and
+  anything taller. Lying litter passes underneath it, so the map has none of
+  it.
+* the CAMERA drops any detection nearer than `min_x` = 0.30 m, so the thing
+  stops being reported exactly when it is about to be run into.
+
+**But the OBJECT MEMORY already holds it.** `ObjectMemory` remembers every
+object the colour camera has confirmed, in world coordinates, and the brain
+carries it for the whole run — that is how `search` returns to things it saw
+earlier. Nothing consults it when driving. Feeding remembered litter into the
+drive path — steer around it, or slow for it, unless it IS the target — is the
+one fix this measurement actually supports, and it needs no new sensing.
+
+Measure it with `probe_moss_shove.py` (contact seconds AND longest unbroken
+contact — the second column is what caught the trapped cap) and check
+`probe_moss_whom.py` afterwards: if the bystander share does not fall, the
+change did not do what it claims.
