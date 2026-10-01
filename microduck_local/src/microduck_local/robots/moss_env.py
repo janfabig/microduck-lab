@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -938,8 +939,11 @@ DEEP_GRIP_M = float(os.environ.get("MICRODUCK_MOSS_DEEP_GRIP", "0") or 0.0)
 #: centre squeeze it out along the jaw, level or not. MEASURED on 478dad's
 #: env ball picks (2026-09-27, 120 episodes, then the yard's lift ramp and
 #: swing to STOW_HIGH): centre under 16 mm from the pad midpoint 33/33 kept,
-#: 16-20 mm 9/12, over 20 mm 2/9. The tool point is no reference for this —
-#: the pad midpoint moves 10-15 mm off it as the jaw closes.
+#: 16-20 mm 9/12, over 20 mm 2/9. (CORRECTED 2026-09-28: the pad midpoint
+#: IS the tool point at every jaw opening once both fingers move — they are
+#: tied; measured 0.0 mm at 41/20/10/0 mm. An earlier "10-15 mm apart" came
+#: from moving one finger alone. So this is also the distance to the tool
+#: point.)
 SPHERE_CENTRE_M = float(os.environ.get("MICRODUCK_MOSS_SPHERE_CENTRE", "0") or 0.0)
 #: START WHERE THE YARD REALLY HANDS OVER — the whole state, not just where the
 #: object is. `data/moss_pick_handover_states_yard.json`: every `creep` entry of
@@ -1196,10 +1200,80 @@ def scene_spec(rung: int, prop: GraspProp | str = DEFAULT_PROP,
     return spec
 
 
+#: Compiled scenes for props that recur, keyed by (rung, prop, ...) — see
+#: `MossPickEnv._bind_model`. Per process; a handful of entries.
+#:
+#: SHARED BETWEEN INSTANCES, and handed out at RESET time — so an env that is
+#: stepping and a `vec_env._SpareReset` spare that is resetting on another
+#: thread can hold the same `MjModel`. That is safe only because nothing here
+#: writes into a compiled model, which is exactly the promise
+#: `MossPickEnv.shares_compiled_model` makes to `vec_env._build_env`.
+_RECURRING_SCENES: dict = {}
+#: Guards compile-and-store: two spares missing the same key would otherwise
+#: both compile, and the loser's model would be dropped from the cache while
+#: the instance that took it was still stepping it.
+_RECURRING_LOCK = threading.Lock()
+
+
+def clear_scene_cache() -> None:
+    """Drop every cached scene.
+
+    `_scene_inputs` cannot see every input (read its docstring), so anything
+    that monkeypatches a `moss` or `moss_env` constant and then builds a
+    scene must call this. `tests/conftest.py` calls it around every test, so
+    a test does not have to remember.
+    """
+    with _RECURRING_LOCK:
+        _RECURRING_SCENES.clear()
+
+
+def _scene_inputs() -> tuple:
+    """The scene inputs outside `scene_spec`'s arguments that actually VARY
+    at runtime, read now: where MOSS's files are, the V0.4 collision switch,
+    the wrist camera's mount, the clock and the solver. A cached scene is
+    reused only when all of it still matches — a test that points
+    `MICRODUCK_MOSS_DIR` elsewhere or moves the camera must not get the last
+    test's model.
+
+    NOT EVERY INPUT, and deliberately so. `scene_spec` also reads this
+    module's `GRASP_PROPS`, `POCKET` and `LEAN_KERB_SIZE`, and
+    `moss.scene_spec()` reads many more `moss` constants than the six here —
+    `BIN_VOID_Z`, `BIN_FLOOR_PRIORITY`, `FINGER_FRICTION` among them. Those
+    are compile-time constants nothing varies in anger, and reading them all
+    on every reset would cost more than the compile this saves. The hazard
+    they leave is a TEST that patches one and then takes the handover path:
+    it would be served the model compiled BEFORE the patch and would
+    silently measure the unpatched physics, green. `clear_scene_cache()` is
+    the answer to that one, not a wider key.
+    """
+    return (str(moss.CACHE_DIR), moss.collision_v04(),
+            tuple(moss.ARM_CAMERA_POS), tuple(moss.ARM_CAMERA_AIM),
+            float(moss.GRASP_PHYSICS_DT),
+            tuple(sorted((k, repr(v)) for k, v in moss.SOLVER_OPTIONS.items())))
+
+
 class MossPickEnv(gym.Env):
     """Drive the can into the jaws and lift it. 32 obs, 9 actions, 25 Hz."""
 
     metadata = {"render_modes": []}
+    #: Reset on a spare instance while this one steps (`vec_env._SpareReset`):
+    #: a reset here is ~50 steps of work — the 2 s deploy plus a recompile —
+    #: and a pick episode is ~45 steps, so in lockstep it idled the fleet.
+    background_reset = True
+    #: ...and SEVERAL of those instances may end up holding ONE compiled
+    #: model, because `_RECURRING_SCENES` caches a recurring prop's scene
+    #: process-wide and hands it out at RESET time — long after
+    #: `vec_env._build_env`'s construction-time check has passed, so that
+    #: check cannot see it. This flag is the promise it asks for instead:
+    #: nothing in this env writes into `self.model` once it is compiled
+    #: (`_bind_model`, `MossDriver.__init__` and `mj_step` only read it, and
+    #: `physics_contact` is applied to the SPEC before the compile), so a
+    #: spare's reset thread cannot race the active instance's steps. An env
+    #: that gains a per-step model write — the walk env's `_sync_model`
+    #: domain randomization is the one in this repo — must NOT set this.
+    #: `viz_server.Duck._make_env` makes the same call for the lab's preview
+    #: envs under the name `writes_model`, and for the same reason.
+    shares_compiled_model = True
 
     def __init__(
         self,
@@ -1604,20 +1678,44 @@ class MossPickEnv(gym.Env):
                 or self.rng.random() < self.handover_frac):
             self._hs = self._hstates[int(self.rng.integers(len(self._hstates)))]
             self.prop = handover_prop(self._hs)
-            self._bind_model()
+            self._bind_model(recurring=True)
             return
         if self.prop_variety:
             self.prop = sample_prop(self.rng, self.litter, self.ball_frac)
             self._bind_model()
 
-    def _bind_model(self) -> None:
+    def _bind_model(self, recurring: bool = False) -> None:
         """Compile this episode's scene and cache everything hanging off
         the model. Called again when the PROP changes: a new shape is a new
         model, and every id cached here belongs to that model.
+
+        `recurring`: the prop comes from a small fixed set (the handover
+        states hold 9 distinct props across 771 states), so its compiled
+        scene is kept and reused — the same bytes a fresh compile gives, as
+        nothing here writes to a model, for ~10 ms less per such reset. A
+        drawn prop never recurs and is never kept. The cached model is
+        SHARED with every other instance that asks for the same scene; see
+        `_RECURRING_SCENES` and `shares_compiled_model` for why that is safe
+        and what would break it.
         """
-        self.model = scene_spec(self.rung, self.prop,
-                                getattr(self, "_clutter", ()),
-                                getattr(self, "_clutter_poses", None)).compile()
+        clutter = getattr(self, "_clutter", ())
+        poses = getattr(self, "_clutter_poses", None)
+        if recurring and not clutter and poses is None:
+            key = (self.rung, self.prop, _scene_inputs())
+            model = _RECURRING_SCENES.get(key)
+            if model is None:
+                # Under the lock, and looked up AGAIN inside it: two spares
+                # resetting at once would otherwise both compile and the
+                # second would evict the first from the cache.
+                with _RECURRING_LOCK:
+                    model = _RECURRING_SCENES.get(key)
+                    if model is None:
+                        model = _RECURRING_SCENES[key] = scene_spec(
+                            self.rung, self.prop).compile()
+            self.model = model
+        else:
+            self.model = scene_spec(self.rung, self.prop, clutter,
+                                    poses).compile()
         #: Arm and gripper geoms — the ones that must not be dragged along
         #: the floor. Resolved from the model rather than guessed by name at
         #: every step.
