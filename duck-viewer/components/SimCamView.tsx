@@ -315,14 +315,14 @@ export function CamOverlay({
           <div style={{ display: legendOpen ? "block" : "none" }}>
           <div><span style={{ color: COLORS.seen }}>●</span> sees it every frame</div>
           <div><span style={{ color: COLORS.marginal }}>●</span> sees it on some frames (small, or at range)</div>
-          <div><span style={{ color: COLORS.small }}>●</span> can't see it: too few pixels at this range</div>
-          <div><span style={{ color: COLORS.blocked }}>●</span> can't see it: something is in the way</div>
-          <div><span style={{ color: COLORS.outside }}>●</span> outside the camera's view</div>
+          <div><span style={{ color: COLORS.small }}>●</span> can&apos;t see it: too few pixels at this range</div>
+          <div><span style={{ color: COLORS.blocked }}>●</span> can&apos;t see it: something is in the way</div>
+          <div><span style={{ color: COLORS.outside }}>●</span> outside the camera&apos;s view</div>
           <div style={{ color: "#8b949e", marginTop: 3 }}>
-            The simulator's explanation, from where things really are — not MOSS's own belief.
-            The boxes in the camera inset name the object for the same reason; MOSS's own
+            The simulator&apos;s explanation, from where things really are — not MOSS&apos;s own belief.
+            The boxes in the camera inset name the object for the same reason; MOSS&apos;s own
             detector only reports a class, and in a tidy room every prop is one class.
-            Teal wedge: the camera's view on the floor. Blue cone: the wrist depth camera (0.6 m).
+            Teal wedge: the camera&apos;s view on the floor. Blue cone: the wrist depth camera (0.6 m).
           </div>
           </div>
         </div>,

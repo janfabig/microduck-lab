@@ -19,7 +19,6 @@ import { captureWantsCleanFrame } from "@/lib/record";
 import { getSelectedDuck } from "@/lib/select";
 import { propRadius, propShape } from "@/lib/prop";
 import {
-  EPISODE_FLASH_MS,
   episodeEdge,
   episodeFlashAlpha,
   episodeFlashLabel,
