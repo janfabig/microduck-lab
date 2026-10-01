@@ -313,6 +313,39 @@ def test_spawn_helper_guards(fake_popen):
     assert "no active training" in V.spawn_helper_error(st)
 
 
+def test_a_helper_joins_the_job_it_was_ASKED_for(fake_popen):
+    """The ＋ sits on every training row now, and the name is the only thing
+    that tells two rows apart.
+
+    Unnamed, the server took `st.job` — the NEWEST — so a click on the older
+    run's row silently added a helper to the other run. `None` still means
+    the newest, because that is what a caller written when the lab held one
+    job means by it.
+    """
+    st = V.LabState([_fake_duck("d0")])
+    older = V.TrainingJob("spin", steps=1000)
+    newer = V.TrainingJob("spin", steps=1000)
+    st.jobs[:] = [older, newer]
+    for j in (older, newer):
+        (j.dir / "model.zip").touch()
+    assert older.run_name != newer.run_name
+
+    assert V.spawn_helper_job(st, None) is newer            # old callers: unchanged
+    assert V.spawn_helper_job(st, older.run_name) is older  # ...and this is the fix
+    assert V.spawn_helper_job(st, newer.run_name) is newer
+    assert V.spawn_helper_job(st, "nobody") is None
+
+    assert V.spawn_helper_error(st, older.run_name) is None
+    assert "no job named" in (V.spawn_helper_error(st, "nobody") or "")
+
+    # A row whose run has STOPPED carries no ＋, and naming it is refused
+    # rather than quietly falling back to whatever is still training.
+    older.status = "done"
+    assert V.spawn_helper_job(st, older.run_name) is None
+    assert "no job named" in (V.spawn_helper_error(st, older.run_name) or "")
+    assert V.spawn_helper_error(st, newer.run_name) is None
+
+
 def test_remove_duck_guards(fake_popen):
     from types import SimpleNamespace
     st = V.LabState([_fake_duck("d0"), _fake_duck("trainee"),

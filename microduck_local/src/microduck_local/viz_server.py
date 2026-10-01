@@ -113,7 +113,10 @@ accepts:
                            trick arc instead of only a standing start — a
                            no-op for policies without a curriculum behind them
   {"spawn_helper": true}   add a helper duck: another viewer of the same
-                           live.onnx snapshot. Helpers do NOT add trainer
+                           live.onnx snapshot. {"spawn_helper": {"run": …}}
+                           names WHICH live job to join; bare `true` means
+                           the newest, as it did when the lab held one.
+                           Helpers do NOT add trainer
                            workers — measured live-lab, 16 envs ran at
                            10.0k steps/s and 26 envs (5 helpers × +2) at
                            6.8k, because the extra processes fight the
@@ -1997,6 +2000,55 @@ def lab_state_path() -> Path:
     return Path(env) if env else RUNS_DIR.parent / "lab-state.json"
 
 
+#: The lab the viewer, /teach and every skill talk to. Any other port is a
+#: SCRATCH lab (filming, A/Bs, a review) — see `scratch_state_path` and
+#: `idle_exit_minutes`.
+DEFAULT_LAB_PORT = 8788
+#: Minutes a scratch lab stays up with nobody watching and nothing training.
+SCRATCH_IDLE_EXIT_MIN = 30.0
+#: How often the idle watch looks.
+IDLE_POLL_S = 30.0
+
+
+def scratch_state_path(port: int) -> Path | None:
+    """The roster file a SCRATCH lab uses when LAB_STATE_PATH is unset.
+
+    Before this, a second port fell through to the real lab's
+    `lab-state.json`: `duck-lab --port 8799 --fresh ...` (the filming
+    recipe) DELETED the main lab's roster and then saved its own over it.
+    None for the default port, and whenever LAB_STATE_PATH already says.
+    """
+    if port == DEFAULT_LAB_PORT or os.environ.get("LAB_STATE_PATH"):
+        return None
+    return RUNS_DIR.parent / f"lab-state-{port}.json"
+
+
+def idle_exit_minutes(port: int, flag: float | None) -> float:
+    """`--idle-exit`, resolved: what the flag says, else never on the default
+    port and `SCRATCH_IDLE_EXIT_MIN` on any other. MEASURED 2026-09-28: a
+    scratch lab from a filming session was still stepping its roster three
+    days later at ~20% of a core, with no viewer and no job."""
+    if flag is not None:
+        return max(0.0, float(flag))
+    return 0.0 if port == DEFAULT_LAB_PORT else SCRATCH_IDLE_EXIT_MIN
+
+
+class IdleWatch:
+    """True once `busy` has been False for `limit_s` without a break."""
+
+    def __init__(self, limit_s: float):
+        self.limit_s = float(limit_s)
+        self.since: float | None = None
+
+    def update(self, busy: bool, now: float) -> bool:
+        if busy:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = now
+        return now - self.since >= self.limit_s
+
+
 def teach_weights_path() -> Path:
     return lab_state_path().with_name("teach-weights.json")
 
@@ -2517,18 +2569,40 @@ def next_helper_slot(ducks: list[Duck]) -> int:
     return n
 
 
-def spawn_helper_error(st: LabState) -> str | None:
-    """Why {"spawn_helper": true} can't be honored right now (None = go)."""
+def spawn_helper_job(st: LabState, run: str | None):
+    """The job a helper should join: the one NAMED, else the newest training.
+
+    The ＋ button sits on EVERY training row now that the lab runs several
+    jobs at once, but the message carried no name and the server took
+    `st.job` — the newest. Clicking ＋ on the older row silently added a
+    helper to the other run. Resolving by name here is what makes the two
+    rows mean different things; `None` keeps the old meaning for a caller
+    written when the lab held a single job.
+    """
+    live = st.training_jobs()
+    if run is None:
+        return live[-1] if live else None
+    return next((j for j in live if j.run_name == run), None)
+
+
+def spawn_helper_error(st: LabState, run: str | None = None) -> str | None:
+    """Why {"spawn_helper": ...} can't be honored right now (None = go)."""
     # A job that is actually TRAINING, not merely the newest — the newest is
     # often a finished one once the lab runs several at a time.
     live = st.training_jobs()
     if not live:
         return "no active training for a helper to join"
+    job = spawn_helper_job(st, run)
+    if job is None:
+        return f"no job named {run!r} is training"
     if st.scaling:
         return "trainer is mid-restart — try again in a moment"
+    # The cap is on the ROSTER, not on one job: helper ducks are a single
+    # pool (`helper1`, `helper2`, …) that no job owns. The viewer counts the
+    # same ducks, so the button's enabled state matches this answer.
     if len(helper_ducks(st.ducks)) >= MAX_HELPERS:
         return f"helper cap reached ({MAX_HELPERS})"
-    if not (live[-1].dir / "model.zip").exists():
+    if not (job.dir / "model.zip").exists():
         return "helpers can join after the first training snapshot — moments away"
     return None
 
@@ -3502,7 +3576,7 @@ def origin_allowed(origin: str | None) -> bool:
     return origin is None or bool(LOCAL_ORIGIN_RE.fullmatch(origin))
 
 
-def make_app(ducks: list[Duck]):
+def make_app(ducks: list[Duck], idle_exit_s: float = 0.0):
     scene = extract_scene()
     st = LabState(ducks)
     stats = StatsSampler()
@@ -3510,6 +3584,28 @@ def make_app(ducks: list[Duck]):
     # Ducks apply_snapshot has already refused to re-brain, so the reason is
     # said once instead of at every snapshot. Cleared when a new job starts.
     snapshot_skipped: set[str] = set()
+
+    async def idle_watch(limit_s: float) -> None:
+        """`--idle-exit`: shut the lab down once nobody has watched /lab or
+        /sim and nothing has trained for `limit_s`. SIGTERM, so uvicorn runs
+        the lifespan's shutdown like a Ctrl-C would."""
+        import signal
+        watch = IdleWatch(limit_s)
+        polled = time.monotonic()
+        while True:
+            await asyncio.sleep(min(IDLE_POLL_S, limit_s))
+            now = time.monotonic()
+            # An HTTP request counts as someone using the lab: an agent that
+            # drives /world/load and /world/speed and reads results over REST
+            # never opens a socket, and must not be shut down mid-experiment.
+            busy = bool(st.clients or world.clients or st.training_jobs()
+                        or app.state.last_request > polled)
+            polled = now
+            if watch.update(busy, now):
+                print(f"[lab] nobody watching and nothing training for "
+                      f"{limit_s / 60:g} min — exiting (--idle-exit)", flush=True)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -3530,14 +3626,25 @@ def make_app(ducks: list[Duck]):
                       "sent. Restart the lab.", flush=True)
 
         task.add_done_callback(_loop_died)
+        idle_task = (asyncio.create_task(idle_watch(idle_exit_s))
+                     if idle_exit_s > 0 else None)
         yield
         task.cancel()
+        if idle_task is not None:
+            idle_task.cancel()
         world.stop()
         for j in st.jobs:
             j.stop()
 
     app = FastAPI(title="Duck lab", lifespan=lifespan)
     app.state.lab = st  # the roster/job the handlers close over, for tests
+    #: When the last HTTP request arrived — `--idle-exit`'s evidence of use.
+    app.state.last_request = time.monotonic()
+
+    @app.middleware("http")
+    async def _stamp_request(request, call_next):
+        app.state.last_request = time.monotonic()
+        return await call_next(request)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     # LOCAL origins only. This was allow_origins=["*"], which was harmless
     # while every route was a read or a duck nudge — but the lab now owns
@@ -4539,7 +4646,12 @@ def make_app(ducks: list[Duck]):
                     asyncio.create_task(do_assign(str(a.get("duck")), str(a.get("policy")),
                                                   showcase=bool(a.get("showcase"))))
                 if msg.get("spawn_helper"):
-                    asyncio.create_task(do_spawn_helper())
+                    sh = msg["spawn_helper"]
+                    # `true` still means the newest job, which is what a
+                    # viewer written before concurrency means by it.
+                    _run = sh.get("run") if isinstance(sh, dict) else None
+                    asyncio.create_task(do_spawn_helper(
+                        str(_run) if _run else None))
                 if "remove_duck" in msg:
                     rd = msg["remove_duck"]
                     duck_id = rd.get("duck") if isinstance(rd, dict) else rd
@@ -4618,15 +4730,19 @@ def make_app(ducks: list[Duck]):
                          + (f" ({run_name})" if label != run_name else ""))
         save_lab_state(st.ducks)
 
-    async def do_spawn_helper() -> None:
-        err = spawn_helper_error(st)
+    async def do_spawn_helper(run: str | None = None) -> None:
+        err = spawn_helper_error(st, run)
         if err:
             st.events.append(f"spawn_helper ignored: {err}")
             return
         st.scaling = True
         n = next_helper_slot(st.ducks)
         try:
-            job = st.job
+            # The job the click NAMED, not `st.job` — see `spawn_helper_job`.
+            job = spawn_helper_job(st, run)
+            if job is None:          # raced with that run ending
+                st.events.append("helper not spawned: that run just ended")
+                return
             # WHICH BODY — the job's, same as the 🎓 trainee's. A helper is a
             # clone of the trainee, and without this it was built as a duck
             # whatever was being taught: for a G1 task `trainee_env_kwargs`
@@ -4945,6 +5061,12 @@ def make_app(ducks: list[Duck]):
                     # lab can now train several at once.
                     "training": st.job.payload() if st.job else None,
                     "trainings": [j.payload() for j in st.jobs],
+                    # A spawn/remove scale is in flight. GLOBAL, because
+                    # `remove_duck_error`'s helper guard is global: without
+                    # it the viewer had to guess from the newest job's own
+                    # `restarting`, and disabled a helper's ✕ because some
+                    # OTHER job was restarting.
+                    "scaling": st.scaling,
                     "events": list(st.events)[-5:],
                     "ducks": [{
                         "id": d.id,
@@ -5057,14 +5179,29 @@ def main() -> None:
     ap.add_argument("policies", nargs="*", help="run dirs and/or .onnx paths")
     ap.add_argument("--checkpoints", default=None,
                     help="run dir: add one duck per training checkpoint")
-    ap.add_argument("--port", type=int, default=8788)
+    ap.add_argument("--port", type=int, default=DEFAULT_LAB_PORT)
     ap.add_argument("--world", default=None, metavar="SCENARIO",
                     help="preload a /sim world (a built-in or scenarios/<name>.json); "
                          "with --world the roster may be empty")
     ap.add_argument("--fresh", action="store_true",
                     help="delete lab-state.json and seed the roster from the "
                          "CLI args instead of restoring it")
+    ap.add_argument("--idle-exit", type=float, default=None, metavar="MIN",
+                    help="exit after MIN minutes with no viewer on /lab or /sim "
+                         f"and no training (0 = never). Default: never on "
+                         f"{DEFAULT_LAB_PORT}, {SCRATCH_IDLE_EXIT_MIN:g} on any "
+                         "other port, so a scratch lab cannot outlive its session")
     args = ap.parse_args()
+
+    scratch = scratch_state_path(args.port)
+    if scratch is not None:
+        os.environ["LAB_STATE_PATH"] = str(scratch)
+        print(f"[lab] scratch port {args.port}: roster file {scratch.name} "
+              "(the main lab's lab-state.json is not touched)")
+    idle_min = idle_exit_minutes(args.port, args.idle_exit)
+    if idle_min > 0:
+        print(f"[lab] exits after {idle_min:g} min with no viewer and no "
+              "training (--idle-exit 0 to keep it up)")
 
     state_path = lab_state_path()
     if args.fresh:
@@ -5080,7 +5217,7 @@ def main() -> None:
     print(f"[lab] {len(ducks)} ducks: {', '.join(d.label for d in ducks)}")
 
     import uvicorn
-    app = make_app(ducks)
+    app = make_app(ducks, idle_exit_s=60.0 * idle_min)
     if args.world:
         app.state.world.preload(args.world)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
