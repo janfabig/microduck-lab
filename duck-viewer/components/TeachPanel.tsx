@@ -1709,7 +1709,17 @@ export function TeachPanel({
             onPinStage={(stage, steps) =>
               setStagePins((p) => ({ ...p, [stage]: steps }))
             }
-            onStop={() => fetch(`${LAB_HTTP}/teach/stop`, { method: "POST" })}
+            onStop={() =>
+              // NAME the job. A bare /teach/stop stops every live job, which
+              // is what it meant when the lab could only hold one — with
+              // several training at once an unnamed stop from this card
+              // killed the other jobs too, including another session's.
+              fetch(`${LAB_HTTP}/teach/stop`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ run: training.runName }),
+              })
+            }
             onRecipeSubmit={submitRecipe}
             onStageWeights={applyStageWeights}
             onStartStage={startFromStage}

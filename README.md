@@ -40,10 +40,16 @@ wheeled robot with an arm.
   ducks — and walks around `/sim` as the person the ducks follow.
 - **[A third robot, Innate's MARS](#a-third-robot-innates-mars)**: a wheeled
   base with an arm, downloaded in 8 s, that drives a room, scans it with a
-  360° LiDAR and tidies the playroom with its claw — **0.94** of the toys in
-  five minutes against the duck's 0.83. A robot is a registry entry now rather
+  360° LiDAR and tidies the playroom with its claw — **0.94** of the blocks in
+  five minutes, no falls. A robot is a registry entry now rather
   than 45 `if robot == "g1"` literals, so a MuJoCo Menagerie model
   (`fetch-robot menagerie:unitree_go2`) also stands on the stage.
+- **[A fourth robot, MOSS](#a-fourth-robot-moss-the-litter-picker)**: Show
+  Robotics' tracked litter-picking rover, arriving as a finished MJCF rather
+  than a URDF. It clears a yard of **11 pieces of litter in 3 min 32 s**, and
+  most of the work was not the picking — it was asking what a *real* one would
+  have done to its servos, which is a different question from whether the room
+  got clean.
 - **[IK in the 🎬 animate panel](#animate-keyframe-a-motion-then-make-it-real)**,
   for the duck and the G1: drag a foot, a hand or the centre of mass and the
   lab solves the joints. A 0.62 m G1 front kick was *drawn* in seven keyframes and then
@@ -93,11 +99,12 @@ vendored here.
     the rejected experiments written down next to the shipped ones
   - `train-brain`: train the *brain* (the person-follower) with PPO, on top of
     a frozen walking policy
-  - `--robot g1` / `--robot mars`: the trainer, exporter, renderer, lab and
-    `/sim` are body-agnostic behind a `Body` registry
+  - `--robot g1` / `--robot mars` / `--robot moss`: the trainer, exporter,
+    renderer, lab and `/sim` are body-agnostic behind a `Body` registry
     ([`robots/`](microduck_local/src/microduck_local/robots)) — the 29-joint
     Unitree G1 (`fetch-g1`), Innate's wheeled MARS and its arm tasks
-    (`fetch-robot mars`), and any MuJoCo Menagerie model as a
+    (`fetch-robot mars`), Show Robotics' tracked MOSS and its litter-picking
+    brain (`fetch-robot moss`), and any MuJoCo Menagerie model as a
     stand-and-look body (`fetch-robot menagerie:unitree_go2`)
 - **`duck-viewer/`**: Next.js + react-three-fiber viewer, three pages
   - **`/` the lab**: many robots side by side, live over WebSocket at 25 Hz;
@@ -302,7 +309,7 @@ uv run duck-lab --world playroom      # then open http://localhost:63317/sim
 
 - **Worlds**, and **where to start editing**. Six are built in and generated
   in code, so there is no file to open: `living-room`, `follow-me`,
-  `playroom`, `pitch` (1v1), `pitch-2v2`, `pitch-3v3`. Three more ship as
+  `playroom`, `pitch` (1v1), `pitch-2v2`, `pitch-3v3`. Four more ship as
   plain JSON in [`microduck_local/scenarios/`](microduck_local/scenarios), and
   **those are the ones to copy and expand from**:
 
@@ -310,6 +317,7 @@ uv run duck-lab --world playroom      # then open http://localhost:63317/sim
   |---|---|---|
   | `flock.json` | `flock` | five ducks and a walking **G1** — a second body, and a person with a patrol path |
   | `mars-playroom.json` | `mars-playroom` | a **MARS** and six toys — manipulation, and a room with its own `physics_dt` |
+  | `mars-tidy.json` | `mars-tidy` | the same room with the `tidy_arm` brain and a seed that picks cleanly — the clip [below](#a-third-robot-innates-mars) |
   | `mars-follow.json` | `mars-follow` | a MARS and a walking person — the smallest useful room |
 
   Save one under a new name and it appears in the menu beside the built-ins
@@ -452,6 +460,13 @@ warm-start it, is in
 
 ## A third robot: Innate's MARS
 
+![MARS tidying the playroom: it drives to a block, grips it, carries it to the basket and drops it in (2x speed)](docs/media/sim-mars-tidy.gif)
+
+Side-on at the grasp, with the brain's state machine lit as it runs — `G` draws
+it, every state carries its own line, and the trail under it is the path taken:
+
+![The tidy_arm state machine running: settle, hover, reach, close, lift, deliver, with the arm reaching down and the gripper closing on the block](docs/media/sim-mars-grasp.gif)
+
 The duck walks. The G1 walks. [MARS](https://www.innate.bot) does not — it
 **rolls, and it has an arm**. Innate's mobile manipulator is a differential-drive
 base carrying a 5-joint arm with a parallel-jaw gripper and a pitching head
@@ -463,7 +478,7 @@ sha.
 
 ```bash
 uv run fetch-robot mars                  # 11 files, 7.2 MB, sha256 each — 8 s cold
-uv run duck-lab --world mars-playroom    # then open http://localhost:63317/sim
+uv run duck-lab --world mars-tidy        # then open http://localhost:63317/sim
 uv run eval-tidy --robot mars --seeds 3 --seconds 300
 ```
 
@@ -515,7 +530,16 @@ uv run eval-tidy --robot mars --seeds 3 --seconds 300
   machine (search → approach → pick → carry → release) and swaps the beak for
   the arm: **0.94** of the six toys in five minutes over three seeds, 0.90 over
   eight, **0 falls** — by construction, since a planar base has no attitude to
-  lose — against the duck's 0.83.
+  lose.
+
+  That room is **blocks only** (`eval_tidy.TIDY_KINDS`) — the duck's bill takes
+  the brick and the sock, the claw does not — so **0.94 is not a score against
+  the duck**. The duck takes 1.00 of the matched three seeds
+  ([`docs/mars-roadmap.md`](docs/mars-roadmap.md) Phase 5), and 0.92 over four
+  seeds of its own mixed room (re-run 2026-09-22). The 0.83 this section used
+  to compare against came from a different seed set, and one seed moves the
+  duck's mean by 0.09, so that gap was inside the scatter. The mixed
+  `mars-tidy` room below is the harder task: 3/6 at seed 1.
 
   The lever was the **timestep**, not the reward. A scripted grasp holds 4/16
   spots at the lab's 5 ms and 14/16 at Innate's 2 ms, and what fails is not
@@ -523,13 +547,19 @@ uv run eval-tidy --robot mars --seeds 3 --seconds 300
   room carries its own `physics_dt` now, `mars-playroom` runs at 2 ms (39.8×
   real time, ~13 s a seed), and every duck scenario is untouched at 5 ms.
 
-  The shipped `mars-playroom` starts on `wander`, which is the wrong brain for
-  a wheeled body and says so honestly (the basket's 6 cm rim is 11 cm below the
-  scan plane, so the MARS parks on it). Switch the brain to `tidy_arm` in the
-  `/sim` inspector, or watch the loop headless:
+  Both clips at the top of this section are that loop on `mars-tidy`, the scenario
+  the shipped `mars-playroom` becomes once its brain is `tidy_arm`: drive to a
+  block, grip it, carry it across the room, drop it in the basket. The
+  16 states behind that sentence are what the graph in the second clip draws.
+  (`mars-playroom` opens on `tidy_arm` too. It used to open on `wander`, which
+  is the wrong brain for a wheeled body: the basket's 6 cm rim is 11 cm below
+  the scan plane, so the MARS drove onto it and looked stalled. Pick `wander`
+  from the inspector's brain menu to watch that happen.) Watch it headless, or
+  on `/sim`:
 
   ```bash
-  uv run record-world mars-playroom --brain d0=tidy_arm --seconds 120 --out /tmp/rw-mars
+  uv run record-world mars-tidy --seed 1 --seconds 20 --out /tmp/rw-mars
+  uv run duck-lab --world mars-tidy          # then open http://localhost:63317/sim
   ```
 - **The arm policies are trained, and both bars are still open.** `reach` and
   `pick` are 🎓 teach-panel tasks (the panel says "task", not "trick", for a
@@ -559,6 +589,82 @@ good for is what the rest of this repo is good for: prototyping a behavior in
 minutes, and knowing which number would tell you it worked. The plan, the
 measurements and the rejected turns are in
 [docs/mars-roadmap.md](docs/mars-roadmap.md).
+
+## A fourth robot: MOSS, the litter picker
+
+![MOSS tidying the yard on the /sim page: it drives at a piece of litter, reaches down, grips it, lifts it over the bin on its back and drops it in — with its head and wrist camera views, its LiDAR fan and its object memory alongside (4x speed)](docs/media/sim-moss-tidy.gif)
+
+The duck walks, the G1 walks, MARS rolls. **MOSS crawls, on tracks, and tidies
+up after people.** Show Robotics' ~28 cm litter-picking rover carries a bin on
+its back and an SO-101-derived arm with a NormaCore parallel gripper, and it is
+built in public by Laurent Genoud in
+[metrox-eth/moss](https://github.com/metrox-eth/moss). It is
+the fourth body here and the first to arrive as a **finished MJCF** rather than
+a URDF: he publishes the CPU-MuJoCo simulator his recorded pick-and-drop
+missions run in — `moss_robot.xml` and 57 meshes — in
+[metrox-eth/moss-jev](https://github.com/metrox-eth/moss-jev), pinned here by
+sha and downloaded byte-for-byte against a manifest.
+
+```bash
+uv run fetch-robot moss                       # his MJCF + 57 meshes, sha256 each
+uv run duck-lab --world moss-yard             # then open http://localhost:63317/sim
+uv run record-world moss-yard --seconds 120 --camera follow:m0 --out /tmp/rw-moss
+```
+
+- **What is his, and what is ours.** Nothing in the download is edited on
+  disk, so the cache stays verifiable. The three rewrites this lab needs happen
+  *in memory* on the way into a spec, and all three are about the BASE: his is
+  one `base_x` slide on a 0.8 m rail — he says so himself ("Base movement is
+  currently simplified") — so a room needs the other two DoFs, the rail's
+  position servo has to go (a planar base is pushed through `xfrc_applied`, and
+  a servo on one axis would steer and then creep back onto his rail), and the
+  rail's `damping="40"` goes with it, because 24 N of drag at his own top track
+  speed is a property of the furniture, not the rover. **His arm, gripper,
+  contact model and meshes are untouched**: the grasp is the half that already
+  works, and the drive is the half he asked for help with.
+
+- **`tidy_moss`: a scripted loop with learned legs inside it.** Search, drive
+  up, deploy the arm, creep or pinch, lift, stow over the bin, release, tuck —
+  a state machine you can read, with trained policies dropped into the four
+  states worth learning (the pickup, the approach, the stow, the fold home) and
+  a scripted fallback behind each. It carries its own `ObjectMemory`, so litter
+  it has seen but not yet collected stays on a map, and a `RoomMap` it fills in
+  from the RealSense depth. Over eight seeded 300 s runs of `moss-yard` it
+  clears **87 of 88 props**, and a watched run of that room on `/sim` cleared
+  all 11 in **3 min 32 s** — no give-ups, no aborted picks, RTF flat at 1.00.
+  The clip above is 20 s out of the middle of a run of the same scenario,
+  played at 4x.
+
+- **The interesting half was not whether the room got clean.** A clean score
+  says nothing about whether the hardware would have survived earning it, and
+  this is the body where that question has an answer: Laurent's own MJCF
+  declares the envelope — five arm joints at kp 70 and ±2.2 N·m, one finger
+  servo at kp 700 and ±8 N. A position servo pinned at its `forcerange` is a
+  **stalled** servo, so `scripts/probe_moss_safety.py` samples every 2 ms
+  *physics* step (a three-substep contact is invisible at 50 Hz) and reports
+  **durations, not peaks**. What that found, and what shipped:
+
+  | Found | Fixed by | Measured |
+  |---|---|---|
+  | The arm asked for 2.75 rad in one tick, and spent 9 s at its torque clamp | `arm_rate_cap = 3.0` rad/s, each blend *timed* by its own largest delta rather than clipped | no mission cost at 180 s or 300 s |
+  | 95% of what the rover's driving surfaces touched was litter it was **not** going for — and 26–60% of it was already in its own memory | read the memory as **obstacles**, not just as goals: bias the yaw away from any confirmed non-target in the track corridor | driving contact **5.30 → 1.11 s** median over 64 paired seeds, −2.86 ± 0.89 s, sign p = 0.044, binned flat-to-better |
+  | In 4 seeds of 64 something jammed under the robot and rode there for 123–207 s of a 300 s run | it was a 2 g bottle cap, pushed through the 4 mm bin floor into an **8.2 mm slot** between the hull's top and the basket's floor — open on every side, invisible because the shell meshes that close it are `contype 0`. Sealing the void removes the trap | **4/64 → 0/64**, worst sustained contact 207 s → 39 s, nothing else moved |
+
+  Two camera changes suggested themselves first and both were measured before
+  anything was built: pitching the head down moves "in frame before contact"
+  from 20% to 25%, because the limit is *lateral* — 87° of lens at 0.156 m of
+  setback covers a floor strip 0.09 m wide where the tracks are 0.42 m — and
+  the wrist camera at rest aims out to the robot's left. The data pointed at
+  the memory instead, and the memory was free.
+
+**Honestly: this is a simulator, and the chassis mass is a placeholder.** His
+exporter froze an explicit 6.139 kg `<inertial>` from a density composite of
+unmassed boxes — solid PETG, which a printed shell is nothing like — and the
+arm's own seven links are the only real inertias in the model. That matters
+more for driving than for grasping, so every drive gain here is picked against
+a number that will change. The rest of the MOSS findings, including the ones
+that measured null and the floor scrape still open, are in
+[docs/roadmap.md](docs/roadmap.md).
 
 ## `/train`: graphs for brain-training runs
 
