@@ -16,6 +16,12 @@ import numpy as np
 
 from microduck_local.robots import moss
 
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 
 def _rover_boxes(m, d):
     """Every colliding box on the rover, as base-frame z spans."""

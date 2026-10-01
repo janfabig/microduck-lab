@@ -10,6 +10,10 @@ import pytest
 from microduck_local.brain.tidy_moss import TidyMossParams
 from microduck_local.robots import moss
 
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 
 @pytest.fixture(scope="module")
 def clear():

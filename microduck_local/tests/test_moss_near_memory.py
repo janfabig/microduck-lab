@@ -15,6 +15,12 @@ from microduck_local.brain.runtime import Senses
 from microduck_local.robots import moss
 from microduck_local.sensors.detector import Detection, DetectionFrame
 
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 NEAR = moss.FRONT_EXTENT_M          # the split's floor for the memory
 
 

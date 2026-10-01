@@ -10,6 +10,13 @@ from microduck_local.brain.moss_search import ObjectMemory, Patrol, area_from_wo
 from microduck_local.sensors.detector import Detection, DetectionFrame
 from microduck_local.world.scenario import Wall
 
+import pytest
+from microduck_local.robots import moss
+
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 
 def test_a_far_object_is_one_memory_not_a_streak():
     """A can at 1.5 m ranged from its apparent width (~10% noise) is ONE

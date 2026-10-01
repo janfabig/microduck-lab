@@ -4,6 +4,13 @@ import dataclasses
 from microduck_local.brain.runtime import Senses
 from microduck_local.brain.tidy_moss import TidyMoss
 
+import pytest
+from microduck_local.robots import moss
+
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 
 def _s(t, grip):
     return Senses(t=t, target_obs={"grip": grip})

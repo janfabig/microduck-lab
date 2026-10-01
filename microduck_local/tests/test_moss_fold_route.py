@@ -6,6 +6,12 @@ import numpy as np
 
 from microduck_local.robots import moss
 
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 
 def _hits_body(m, d, q) -> bool:
     """Does any arm geom touch the rover's hull, bin or tracks at pose q?"""

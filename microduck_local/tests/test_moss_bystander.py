@@ -13,6 +13,12 @@ import math
 from microduck_local.brain.runtime import Senses
 from microduck_local.robots import moss
 
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not moss.moss_ready(),
+    reason="MOSS assets missing — uv run fetch-robot moss")
+
 LOOK = 0.45
 CORRIDOR = moss.HALF_WIDTH_M + 0.03
 
