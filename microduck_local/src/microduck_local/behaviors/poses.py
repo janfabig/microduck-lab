@@ -184,14 +184,49 @@ _register(Behavior(
         RewardTerm("feet_planted", "Points for keeping both feet on the ground", 1.0, _both_feet_down),
         RewardTerm("head_up", "Points for holding the head up in its natural pose", 1.0, _head_up_blend),
         RewardTerm("flat_feet", "Points for keeping the feet flat on the floor", 0.8, _flat_feet),
-        RewardTerm("face_home", "Penalty for twisting away from the starting direction", 0.8,
-                   _face_home_pen, is_penalty=True),
+        RewardTerm("face_home", "Penalty for twisting away from the starting direction", 0.8, _face_home_pen, is_penalty=True),
         _upright_term(1.5),
         RewardTerm("stay_put", "Penalty for drifting away from the spot", 1.0, _still_penalty, is_penalty=True),
         *_BASE_REGULARIZERS,
     ),
     default_steps=1_500_000,
     success_metric="how close the body height sits to the crouch target",
+))
+
+
+_register(Behavior(
+    id="bow",
+    emoji="🙇",
+    title="Bow down",
+    description=(
+        "Tip the upper body forward about 20 degrees, turn the head a little "
+        "to the left, and hold the bow on two flat feet."
+    ),
+    how_it_learns=(
+        "The recipe pays for the trunk being pitched forward to the bow angle, "
+        "read off the gravity direction the IMU sees, plus a little for the head "
+        "turned and the body held a bit lower. Standing still already earns a "
+        "fifth of the angle points, so there is a slope toward the bow from the "
+        "first step; leaning too far tips the duck over its toes and ends the "
+        "episode, which is the only 'do not fall' signal it needs. PPO finds the "
+        "hip angle that collects angle, head and foot points at once, then "
+        "learns to hold it."
+    ),
+    keywords=("bow", "take a bow", "bow down", "curtsy", "verbeug", "verbeugung",
+              "lean forward", "bend forward", "greet"),
+    terms=(
+        RewardTerm("upperbody_leaning", "Big points for leaning the upper body forward", 3.0, _bow),
+        RewardTerm("bow_height", "Big points for holding the body ~0.5 cm lower than standing", 2.0, _bow_height),
+        RewardTerm("head_turned", "Big points for turning the head ~20° to the left", 2.0, _head_turned),
+        RewardTerm("feet_planted", "Points for keeping both feet on the ground", 1.0, _both_feet_down),
+        RewardTerm("flat_feet", "Points for keeping the feet flat on the floor", 0.8, _flat_feet),
+        RewardTerm("upright_horizontally", "Points for keeping the body upright horizontally", 0.8, _upright_bow),
+        RewardTerm("face_home", "Penalty for twisting away from the starting direction", 0.8, _face_home_pen, is_penalty=True),
+        RewardTerm("stay_put", "Penalty for drifting away from the spot", 1.0, _still_penalty, is_penalty=True),
+        *_BASE_REGULARIZERS,
+    ),
+    default_steps=1_500_000,
+    success_metric="unbroken seconds held at the bow angle on two flat feet",
 ))
 
 # --- deep squat -------------------------------------------------------------

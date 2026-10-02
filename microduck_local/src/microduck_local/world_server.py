@@ -1418,6 +1418,15 @@ def mount_world(app: FastAPI, *, load_infer: Callable[[str], Infer] | None,
                 if "assign" in msg and st.world is not None:
                     a = msg["assign"]
                     asyncio.create_task(do_assign(str(a.get("duck")), str(a.get("policy"))))
+                if "skill" in msg and st.world is not None:
+                    s = msg["skill"]
+                    did, name = str(s.get("duck")), str(s.get("name"))
+                    if did not in st.world.ducks:
+                        st.events.append(f"skill ignored: no duck {did}")
+                    elif st.world.start_skill(st.world.ducks[did], name):
+                        st.events.append(f"{did} starts {name}")
+                    else:
+                        st.events.append(f"skill ignored: {name} (unknown, no policy file, or one is running)")
                 if "tether" in msg:
                     st.tether_ms = float(max(0.0, min(float(msg["tether"] or 0.0), 2000.0)))
                     st._tether_queue.clear()

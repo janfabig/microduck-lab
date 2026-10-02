@@ -662,6 +662,26 @@ def _step_dont_skid(env) -> float:
                 pay += 0.5
     return pay
 
+# --- bow --------------------------------------------------------------------
+
+def _bow(env) -> float:
+    g0 = float(env._projected_gravity()[0])
+    d2 = (g0 - 0.35) ** 2  # target ~20° (g[0] is sin(pitch): 0.35 = ~20 deg nose-down) forward
+    return 0.5 * float(np.exp(-d2 / 0.35 ** 2)) + 0.5 * float(np.exp(-d2 / 0.1 ** 2))
+
+def _bow_height(env) -> float:
+    z = float(env._trunk_xpos[2])
+    d2 = (z - (env.stand_z - 0.005)) ** 2  # target ~0.5 cm below standing
+    return 0.5 * float(np.exp(-d2 / 0.035 ** 2)) + 0.5 * float(np.exp(-d2 / 0.012 ** 2))
+
+def _head_turned(env) -> float:
+    yaw = float(env._joint_pos_rel()[7])
+    d2 = (float(yaw - 0.35)) ** 2  # target ~20° (= 0.35 rad) to the left
+    return 0.5 * float(np.exp(-d2 / 0.35 ** 2)) + 0.5 * float(np.exp(-d2 / 0.1 ** 2))
+
+def _upright_bow(env) -> float:
+    g = env._projected_gravity()
+    return float(np.exp(-(g[1] ** 2) / 0.05))
 
 CATALOG: dict[str, RewardTerm] = {
     t.key: t for t in (

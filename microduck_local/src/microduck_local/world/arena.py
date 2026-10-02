@@ -120,6 +120,8 @@ MOUTH_DROP_S = 0.6
 # `kick_duration` (0.5 s in robotd's control.rs) with an all-zero command,
 # then back to the walker. Same protocol here.
 KICK_S = 0.5
+# TODO: comment
+BOW_S = 1.5
 # A kick ONNX whose sidecar says `"sensed": true` was trained with the BALL in
 # its four head command slots (roadmap 12as, `behaviors/lastmetre.py`) instead
 # of the all-zero block the vendored pair was trained on. This is the class the
@@ -169,8 +171,10 @@ KICK_GOAL_S = 4.0
 # the same whole action this world always applies) and the softened
 # standing gain, `standing_gain_ratio` × the walking Kp (control.rs).
 STANDING_GAIN_RATIO = 0.8
-SKILLS = {"ground_pick": "alpha_ground_pick.onnx", "kick_left": "ball_kick_left.onnx",
-          "kick_right": "ball_kick_right.onnx"}
+SKILLS = {"ground_pick": "alpha_ground_pick.onnx",
+          "kick_left": "ball_kick_left.onnx",
+          "kick_right": "ball_kick_right.onnx",
+          "bow": "bow.onnx"}
 PICK_REACH_AHEAD = 0.078     # where the tip lands, ahead of the trunk origin (m), standing on the walker
 PICK_REACH_LEFT = 0.014      # …and a touch to the left (the beak is not on the centreline)
 GRASP_TOL_XY = 0.04          # a toy centre within this of the tip can be grasped (the beak is ~2 cm wide)
@@ -2083,6 +2087,12 @@ class World:
             else:
                 d.head_cmd[:] = 0.0
             d.body_cmd[:] = 0.0
+            return d.skill_infer
+        elif d.skill == "bow":
+            if self.t - d.skill_t0 >= BOW_S:
+                d.skill, d.skill_infer, d.twist_cmd[:] = None, None, 0.0
+                return None
+            d.twist_cmd[:], d.head_cmd[:], d.body_cmd[:] = 0.0, 0.0, 0.0
             return d.skill_infer
         phi = (self.t - d.skill_t0) / GROUND_PICK_PERIOD_S
         if phi >= GROUND_PICK_END_PHI:
