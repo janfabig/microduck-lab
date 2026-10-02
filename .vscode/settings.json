@@ -1,0 +1,32 @@
+{
+  // Python: das uv-venv von microduck_local, Typ-Checker aus (SB3/Torch sind dynamisch getypt)
+  "python.defaultInterpreterPath": "${workspaceFolder}/microduck_local/.venv/bin/python",
+  "python.analysis.typeCheckingMode": "off",
+
+  // Explorer: nur die Ente. G1, MARS und MOSS bleiben im Repo, werden aber ausgeblendet.
+  // Zum Einblenden: Explorer-Menü "..." -> "Ausgeschlossene Dateien anzeigen" oder Zeile hier auskommentieren.
+  "files.exclude": {
+    "**/*g1*": true,
+    "**/*mars*": true,
+    "**/*moss*": true,
+    "**/menagerie.py": true,
+    "**/unitree_g1": true,
+    "**/tidy_arm.py": true,
+    "**/test_tidy_arm.py": true,
+    "**/test_menagerie.py": true,
+    "**/G1Look.*": true,
+    "**/MarsLook.*": true,
+    "**/SimMossMap.tsx": true,
+    "**/mossmap.test.ts": true
+  },
+  // Suche (Cmd+Shift+F) folgt files.exclude, damit "chase" nicht 1379 Treffer liefert
+  "search.useIgnoreFiles": true,
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/.cache": true,
+    "**/.next": true,
+    "**/runs": true,
+    "**/brains": true
+  }
+}

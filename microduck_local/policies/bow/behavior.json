@@ -1,0 +1,24 @@
+{
+  "behavior": "bow",
+  "steps": 2000000,
+  "weights": {
+    "upperbody_leaning": 3.0,
+    "bow_height": 2.0,
+    "head_turned": 2.0,
+    "feet_planted": 1.0,
+    "flat_feet": 0.8,
+    "upright_horizontally": 0.8,
+    "face_home": 0.8,
+    "stay_put": 1.0,
+    "smooth_moves": 1.0,
+    "gentle_joints": 1.0,
+    "save_energy": 1.0
+  },
+  "symmetry_coef": 0.5,
+  "desired_kl": null,
+  "net_arch": "512,256,128",
+  "shared_trunk": false,
+  "n_epochs": 5,
+  "clip": null,
+  "init_from": "/Users/janfabig/Code/MicroDuck/microduck-lab/microduck_local/runs/teach-bow-25bdeb"
+}

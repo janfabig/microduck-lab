@@ -196,6 +196,7 @@ _register(Behavior(
 
 _register(Behavior(
     id="bow",
+    suggest="bow down",
     emoji="🙇",
     title="Bow down",
     description=(
@@ -266,6 +267,7 @@ def _squat_z(env) -> float:
 
 _register(Behavior(
     id="deep_squat",
+    suggest="go into a deep squat",
     emoji="🐸",
     title="Deep squat",
     description=(

@@ -1677,7 +1677,9 @@ class World:
     # whiff 61 -> 40% in play). A sidecar .json beside the ONNX carries what
     # the brain must know about it (`exit_rad`: the kick's exit angle off the
     # body). MICRODUCK_SKILL_<NAME>=path still wins over both.
-    LOCAL_SKILLS = {"kick_left": "kick/kick_left.onnx", "kick_right": "kick/kick_right.onnx"}
+    LOCAL_SKILLS = {"kick_left": "kick/kick_left.onnx",
+                    "kick_right": "kick/kick_right.onnx",
+                    "bow": "bow/bow.onnx"}
 
     @staticmethod
     def skill_path(name: str) -> Path | None:
